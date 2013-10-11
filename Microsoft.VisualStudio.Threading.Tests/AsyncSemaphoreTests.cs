@@ -5,6 +5,7 @@
 	using System.Text;
 	using System.Threading;
 	using System.Threading.Tasks;
+	using System.Windows.Threading;
 	using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 	[TestClass]
@@ -94,6 +95,35 @@
 			Assert.AreEqual(TaskStatus.RanToCompletion, first.Status);
 			Assert.AreEqual(TaskStatus.RanToCompletion, second.Status);
 			Assert.IsFalse(third.IsCompleted);
+		}
+
+		[TestMethod, Timeout(TestTimeout)]
+		public void SemaphoreMainThreadDeadlockMitigation() {
+			SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+			var frame = new DispatcherFrame();
+			var jtc = new JoinableTaskContext();
+			var jtf = jtc.Factory;
+			var threadPoolEnteredSemaphore = new AsyncManualResetEvent();
+			var mainThreadWaitingForSemaphore = new AsyncManualResetEvent();
+			var user1 = Task.Run(async delegate {
+				using (await this.lck.EnterAsync()) {
+					await threadPoolEnteredSemaphore.SetAsync();
+					await mainThreadWaitingForSemaphore;
+					await jtf.SwitchToMainThreadAsync();
+				}
+			});
+
+			jtf.Run(async delegate {
+				await threadPoolEnteredSemaphore;
+				var awaiter = this.lck.EnterAsync().GetAwaiter();
+				var semaphoreAcquired = new AsyncManualResetEvent();
+				awaiter.OnCompleted(delegate {
+					semaphoreAcquired.SetAsync();
+				});
+				await mainThreadWaitingForSemaphore.SetAsync();
+				await semaphoreAcquired;
+				await user1; // rethrow any exceptions
+			});
 		}
 	}
 }
