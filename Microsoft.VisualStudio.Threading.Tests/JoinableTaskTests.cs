@@ -2376,7 +2376,7 @@
 					await TaskScheduler.Default;
 					await pump.SwitchToMainThreadAsync(CancellationToken.None);
 				},
-				2500);
+				2250);
 		}
 
 		[TestMethod, Timeout(5000), TestCategory("Stress"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
@@ -2388,7 +2388,7 @@
 					await TaskScheduler.Default;
 					await pump.SwitchToMainThreadAsync(tokenSource.Token);
 				},
-				2500);
+				2400);
 		}
 
 		[TestMethod, Timeout(TestTimeout)]
@@ -2473,10 +2473,8 @@
 
 		[TestMethod, Timeout(TestTimeout * 2), TestCategory("GC"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
 		public void RunSynchronouslyTaskWithYieldGCPressure() {
-			var standardTaskFactory = new JoinableTaskFactory(this.asyncPump.Context);
-
 			this.CheckGCPressure(delegate {
-				standardTaskFactory.Run(async delegate {
+				this.asyncPump.Run(async delegate {
 					await Task.Yield();
 				});
 			}, maxBytesAllocated: 1800);
@@ -2485,10 +2483,8 @@
 		[TestMethod, Timeout(TestTimeout * 2), TestCategory("GC"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
 		public void RunSynchronouslyTaskOfTWithYieldGCPressure() {
 			Task<object> completedTask = Task.FromResult<object>(null);
-			var standardTaskFactory = new JoinableTaskFactory(this.asyncPump.Context);
-
 			this.CheckGCPressure(delegate {
-				standardTaskFactory.Run(async delegate {
+				this.asyncPump.Run(async delegate {
 					await Task.Yield();
 				});
 			}, maxBytesAllocated: 1800);
