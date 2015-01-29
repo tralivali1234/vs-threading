@@ -416,7 +416,21 @@
 				await factory.SwitchToMainThreadAsync();
 				Assert.AreEqual(2, factory.TransitioningToMainThreadHitCount, "Transition expected when the task runs to the main thread.");
 				Assert.AreEqual(2, factory.TransitionedToMainThreadHitCount, "Transition expected when the task runs to the main thread.");
+
+				await SingleStepFunction(false);
+				Assert.AreEqual(2, factory.TransitioningToMainThreadHitCount, "No transition expected since we're already on the main thread.");
+				Assert.AreEqual(2, factory.TransitionedToMainThreadHitCount, "No transition expected since we're already on the main thread.");
+
+				await SingleStepFunction(true);
+				Assert.AreEqual(2, factory.TransitioningToMainThreadHitCount, "No transition expected since we're already on the main thread.");
+				Assert.AreEqual(2, factory.TransitionedToMainThreadHitCount, "No transition expected since we're already on the main thread.");
 			});
+		}
+
+		private async Task SingleStepFunction(bool needYield) {
+			if (needYield) {
+				await Task.Yield();
+			}
 		}
 
 		[TestMethod, Timeout(TestTimeout)]
