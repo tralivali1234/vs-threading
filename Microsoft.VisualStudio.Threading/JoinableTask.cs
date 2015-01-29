@@ -401,14 +401,6 @@ namespace Microsoft.VisualStudio.Threading {
 			}
 		}
 
-		[DebuggerBrowsable(DebuggerBrowsableState.Never)]
-		private bool SynchronouslyBlockingMainThread {
-			get {
-				return (this.state & JoinableTaskFlags.StartedSynchronously) == JoinableTaskFlags.StartedSynchronously
-				&& (this.state & JoinableTaskFlags.StartedOnMainThread) == JoinableTaskFlags.StartedOnMainThread;
-			}
-		}
-
 		/// <summary>
 		/// Synchronously blocks the calling thread until the operation has completed.
 		/// If the caller is on the Main thread (or is executing within a JoinableTask that has access to the main thread)
@@ -459,11 +451,10 @@ namespace Microsoft.VisualStudio.Threading {
 						bool mainThreadQueueUpdated = false;
 						bool backgroundThreadQueueUpdated = false;
 						wrapper = SingleExecuteProtector.Create(this, d, state);
-						if (mainThreadAffinitized && !this.SynchronouslyBlockingMainThread) {
-							wrapper.RaiseTransitioningEvents();
-						}
 
 						if (mainThreadAffinitized) {
+							wrapper.RaiseTransitioningEvents();
+
 							if (this.mainThreadQueue == null) {
 								this.mainThreadQueue = new ExecutionQueue(this);
 							}

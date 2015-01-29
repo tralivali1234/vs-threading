@@ -279,6 +279,7 @@
 			var uiThreadNowBusy = new TaskCompletionSource<object>();
 			bool contenderHasReachedUIThread = false;
 
+			((DerivedJoinableTaskFactory)this.asyncPump).AssumeConcurrentUse = true;
 			var backgroundContender = Task.Run(async delegate {
 				await uiThreadNowBusy.Task;
 				await this.asyncPump.SwitchToMainThreadAsync();
@@ -388,7 +389,7 @@
 			});
 		}
 
-		[TestMethod, Timeout(TestTimeout)]
+		[TestMethod]
 		public void TransitionToMainThreadNotRaisedWhenAlreadyOnMainThread() {
 			var factory = (DerivedJoinableTaskFactory)this.asyncPump;
 
@@ -403,18 +404,18 @@
 					Assert.AreEqual(0, factory.TransitioningToMainThreadHitCount, "No transition expected when moving off the main thread.");
 					Assert.AreEqual(0, factory.TransitionedToMainThreadHitCount, "No transition expected when moving off the main thread.");
 				});
-				Assert.AreEqual(0, factory.TransitioningToMainThreadHitCount, "No transition expected since the main thread was ultimately blocked for this job.");
-				Assert.AreEqual(0, factory.TransitionedToMainThreadHitCount, "No transition expected since the main thread was ultimately blocked for this job.");
+				Assert.AreEqual(1, factory.TransitioningToMainThreadHitCount, "Transition expected when the task runs to the main thread.");
+				Assert.AreEqual(1, factory.TransitionedToMainThreadHitCount, "Transition expected when the task runs to the main thread.");
 
 				// Now switch explicitly to a threadpool thread.
 				await TaskScheduler.Default;
-				Assert.AreEqual(0, factory.TransitioningToMainThreadHitCount, "No transition expected when moving off the main thread.");
-				Assert.AreEqual(0, factory.TransitionedToMainThreadHitCount, "No transition expected when moving off the main thread.");
+				Assert.AreEqual(1, factory.TransitioningToMainThreadHitCount, "No transition expected when moving off the main thread.");
+				Assert.AreEqual(1, factory.TransitionedToMainThreadHitCount, "No transition expected when moving off the main thread.");
 
 				// Now switch back to the main thread.
 				await factory.SwitchToMainThreadAsync();
-				Assert.AreEqual(0, factory.TransitioningToMainThreadHitCount, "No transition expected because the main thread was ultimately blocked for this job.");
-				Assert.AreEqual(0, factory.TransitionedToMainThreadHitCount, "No transition expected because the main thread was ultimately blocked for this job.");
+				Assert.AreEqual(2, factory.TransitioningToMainThreadHitCount, "Transition expected when the task runs to the main thread.");
+				Assert.AreEqual(2, factory.TransitionedToMainThreadHitCount, "Transition expected when the task runs to the main thread.");
 			});
 		}
 
@@ -541,6 +542,8 @@
 
 		[TestMethod, Timeout(TestTimeout)]
 		public void RunSynchronouslyOffMainThreadRequiresJoinToReenterMainThreadForSameAsyncPumpInstance() {
+			((DerivedJoinableTaskFactory)this.asyncPump).AssumeConcurrentUse = true;
+
 			var task = Task.Run(delegate {
 				this.asyncPump.Run(async delegate {
 					await this.asyncPump.SwitchToMainThreadAsync();
@@ -812,6 +815,8 @@
 
 		[TestMethod, Timeout(TestTimeout)]
 		public void DoubleJoinedTaskDisjoinCorrectly() {
+			((DerivedJoinableTaskFactory)this.asyncPump).AssumeConcurrentUse = true;
+
 			JoinableTask task1 = null;
 			var taskStarted = new AsyncManualResetEvent();
 			var dependentFirstWorkCompleted = new AsyncManualResetEvent();
@@ -1172,6 +1177,7 @@
 		[TestMethod, Timeout(TestTimeout)]
 		public void JoinRejectsSubsequentWork() {
 			bool outerCompleted = false;
+			((DerivedJoinableTaskFactory)this.asyncPump).AssumeConcurrentUse = true;
 
 			var mainThreadDependentWorkQueued = new AsyncManualResetEvent();
 			var dependentWorkCompleted = new AsyncManualResetEvent();
@@ -1322,6 +1328,8 @@
 		public void RunSynchronouslyKicksOffReturnsThenSyncBlocksStillRequiresJoin() {
 			var mainThreadNowBlocking = new AsyncManualResetEvent();
 			Task task = null;
+			((DerivedJoinableTaskFactory)this.asyncPump).AssumeConcurrentUse = true;
+
 			this.asyncPump.Run(delegate {
 				task = Task.Run(async delegate {
 					await mainThreadNowBlocking.WaitAsync();
@@ -1543,6 +1551,7 @@
 
 		[TestMethod, Timeout(TestTimeout)]
 		public void RunSynchronouslyTaskOfTWithFireAndForgetMethod() {
+			((DerivedJoinableTaskFactory)this.asyncPump).AssumeConcurrentUse = true;
 			this.asyncPump.Run(async delegate {
 				await Task.Yield();
 				SomeFireAndForgetMethod();
@@ -2347,10 +2356,11 @@
 
 		[TestMethod, Timeout(5000), TestCategory("Stress"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
 		public void SwitchToMainThreadMemoryLeak() {
+			var pump = new JoinableTaskFactory(this.asyncPump.Context);
 			this.CheckGCPressure(
 				async delegate {
 					await TaskScheduler.Default;
-					await this.asyncPump.SwitchToMainThreadAsync(CancellationToken.None);
+					await pump.SwitchToMainThreadAsync(CancellationToken.None);
 				},
 				2500);
 		}
@@ -2358,10 +2368,11 @@
 		[TestMethod, Timeout(5000), TestCategory("Stress"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
 		public void SwitchToMainThreadMemoryLeakWithCancellationToken() {
 			CancellationTokenSource tokenSource = new CancellationTokenSource();
+			var pump = new JoinableTaskFactory(this.asyncPump.Context);
 			this.CheckGCPressure(
 				async delegate {
 					await TaskScheduler.Default;
-					await this.asyncPump.SwitchToMainThreadAsync(tokenSource.Token);
+					await pump.SwitchToMainThreadAsync(tokenSource.Token);
 				},
 				2500);
 		}
@@ -2400,6 +2411,8 @@
 
 		[TestMethod, Timeout(TestTimeout)]
 		public void JoinTwice() {
+			((DerivedJoinableTaskFactory)this.asyncPump).AssumeConcurrentUse = true;
+
 			var joinable = this.asyncPump.RunAsync(async delegate {
 				await Task.Yield();
 			});
@@ -2446,8 +2459,10 @@
 
 		[TestMethod, Timeout(TestTimeout * 2), TestCategory("GC"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
 		public void RunSynchronouslyTaskWithYieldGCPressure() {
+			var standardTaskFactory = new JoinableTaskFactory(this.asyncPump.Context);
+
 			this.CheckGCPressure(delegate {
-				this.asyncPump.Run(async delegate {
+				standardTaskFactory.Run(async delegate {
 					await Task.Yield();
 				});
 			}, maxBytesAllocated: 1800);
@@ -2456,9 +2471,10 @@
 		[TestMethod, Timeout(TestTimeout * 2), TestCategory("GC"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
 		public void RunSynchronouslyTaskOfTWithYieldGCPressure() {
 			Task<object> completedTask = Task.FromResult<object>(null);
+			var standardTaskFactory = new JoinableTaskFactory(this.asyncPump.Context);
 
 			this.CheckGCPressure(delegate {
-				this.asyncPump.Run(async delegate {
+				standardTaskFactory.Run(async delegate {
 					await Task.Yield();
 				});
 			}, maxBytesAllocated: 1800);
@@ -2664,7 +2680,7 @@
 				// The JoinableTask should be wakened up and the code to set this event should be executed on main thread,
 				// otherwise, this wait will cause test timeout.
 				transitionedToMainThread.Wait();
-            };
+			};
 			this.asyncPump.Run(async delegate {
 				await TaskScheduler.Default;
 				await this.asyncPump.SwitchToMainThreadAsync();
@@ -2906,7 +2922,7 @@
 				base.PostToUnderlyingSynchronizationContext(callback, state);
 				if (PostToUnderlyingSynchronizationContextCallback != null) {
 					PostToUnderlyingSynchronizationContextCallback();
-                }
+				}
 			}
 		}
 
