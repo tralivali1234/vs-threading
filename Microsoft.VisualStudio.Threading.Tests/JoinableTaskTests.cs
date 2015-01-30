@@ -422,8 +422,8 @@
 				Assert.AreEqual(2, factory.TransitionedToMainThreadHitCount, "No transition expected since we're already on the main thread.");
 
 				await SingleStepFunction(true);
-				Assert.AreEqual(2, factory.TransitioningToMainThreadHitCount, "No transition expected since we're already on the main thread.");
-				Assert.AreEqual(2, factory.TransitionedToMainThreadHitCount, "No transition expected since we're already on the main thread.");
+				Assert.AreEqual(3, factory.TransitioningToMainThreadHitCount, "Transition expected when the task runs to the main thread.");
+				Assert.AreEqual(3, factory.TransitionedToMainThreadHitCount, "Transition expected when the task runs to the main thread.");
 			});
 		}
 
@@ -2473,21 +2473,23 @@
 
 		[TestMethod, Timeout(TestTimeout * 2), TestCategory("GC"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
 		public void RunSynchronouslyTaskWithYieldGCPressure() {
+			var pump = new JoinableTaskFactory(this.asyncPump.Context);
 			this.CheckGCPressure(delegate {
-				this.asyncPump.Run(async delegate {
+				pump.Run(async delegate {
 					await Task.Yield();
 				});
-			}, maxBytesAllocated: 1800);
+			}, maxBytesAllocated: 1650);
 		}
 
 		[TestMethod, Timeout(TestTimeout * 2), TestCategory("GC"), TestCategory("FailsInCloudTest"), TestCategory("FailsInLocalBatch")]
 		public void RunSynchronouslyTaskOfTWithYieldGCPressure() {
 			Task<object> completedTask = Task.FromResult<object>(null);
+			var pump = new JoinableTaskFactory(this.asyncPump.Context);
 			this.CheckGCPressure(delegate {
-				this.asyncPump.Run(async delegate {
+				pump.Run(async delegate {
 					await Task.Yield();
 				});
-			}, maxBytesAllocated: 1800);
+			}, maxBytesAllocated: 1650);
 		}
 
 		/// <summary>
