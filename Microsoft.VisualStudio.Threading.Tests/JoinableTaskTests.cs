@@ -389,7 +389,7 @@
 			});
 		}
 
-		[TestMethod]
+		[TestMethod, Timeout(TestTimeout)]
 		public void TransitionToMainThreadNotRaisedWhenAlreadyOnMainThread() {
 			var factory = (DerivedJoinableTaskFactory)this.asyncPump;
 
