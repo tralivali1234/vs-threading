@@ -46,6 +46,7 @@
     <Compile Include="AsyncEventHandler.cs" />
     <Compile Include="AsyncLazy.cs" />
     <Compile Include="AsyncLocal.cs" />
+    <Compile Include="AsyncPrioritizedQueue.cs" />
     <Compile Include="AsyncQueue.cs" />
     <Compile Include="AsyncReaderWriterLock+HangReportContributor.cs" />
     <Compile Include="AsyncSemaphore.cs" />
