@@ -953,6 +953,10 @@
 				base.SetResourceAsAccessed(resourceCheck, state);
 			}
 
+			internal new void SetAllResourcesToUnknownState() {
+				base.SetAllResourcesToUnknownState();
+			}
+
 			protected override Task<Resource> GetResourceAsync(int resourceMoniker, CancellationToken cancellationToken) {
 				return Task.FromResult(this.resources[resourceMoniker]);
 			}
