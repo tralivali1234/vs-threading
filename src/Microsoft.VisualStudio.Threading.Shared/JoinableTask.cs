@@ -9,6 +9,7 @@ namespace Microsoft.VisualStudio.Threading
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using System.Reflection;
     using System.Runtime.CompilerServices;
@@ -68,6 +69,9 @@ namespace Microsoft.VisualStudio.Threading
         [DebuggerBrowsable(DebuggerBrowsableState.Never)]
         private Task wrappedTask;
 
+        [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+        private object deferredWrappedTaskCompletionSource;
+
         /// <summary>
         /// A map of jobs that we should be willing to dequeue from when we control the UI thread, and a ref count. Lazily constructed.
         /// </summary>
@@ -125,11 +129,13 @@ namespace Microsoft.VisualStudio.Threading
         /// </summary>
         /// <param name="owner">The instance that began the async operation.</param>
         /// <param name="synchronouslyBlocking">A value indicating whether the launching thread will synchronously block for this job's completion.</param>
+        /// <param name="deferredStart">A value indicating whether the joinable task will not execute till its <see cref="PrepareToStartDeferred"/> method is invoked.</param>
         /// <param name="creationOptions">The <see cref="JoinableTaskCreationOptions"/> used to customize the task's behavior.</param>
         /// <param name="initialDelegate">The entry method's info for diagnostics.</param>
-        internal JoinableTask(JoinableTaskFactory owner, bool synchronouslyBlocking, JoinableTaskCreationOptions creationOptions, Delegate initialDelegate)
+        internal JoinableTask(JoinableTaskFactory owner, bool synchronouslyBlocking, bool deferredStart, JoinableTaskCreationOptions creationOptions, Delegate initialDelegate)
         {
             Requires.NotNull(owner, nameof(owner));
+            Assumes.False(deferredStart && synchronouslyBlocking, nameof(deferredStart), "Deferred tasks cannot start as synchronously blocking.");
 
             this.owner = owner;
             if (synchronouslyBlocking)
@@ -144,6 +150,11 @@ namespace Microsoft.VisualStudio.Threading
                 {
                     this.state |= JoinableTaskFlags.SynchronouslyBlockingMainThread;
                 }
+            }
+
+            if (deferredStart)
+            {
+                this.state |= JoinableTaskFlags.Deferred;
             }
 
             this.creationOptions = creationOptions;
@@ -189,6 +200,11 @@ namespace Microsoft.VisualStudio.Threading
             /// on the main thread.
             /// </summary>
             SynchronouslyBlockingMainThread = 0x20,
+
+            /// <summary>
+            /// This JoinableTask has not been started yet.
+            /// </summary>
+            Deferred = 0x40,
         }
 
         [DebuggerBrowsable(DebuggerBrowsableState.Never)]
@@ -267,9 +283,12 @@ namespace Microsoft.VisualStudio.Threading
                 {
                     lock (this.owner.Context.SyncContextLock)
                     {
-                        // If this assumes ever fails, we need to add the ability to synthesize a task
-                        // that we'll complete when the wrapped task that we eventually are assigned completes.
-                        Assumes.NotNull(this.wrappedTask);
+                        if (this.wrappedTask == null)
+                        {
+                            Assumes.Null(this.deferredWrappedTaskCompletionSource);
+                            this.deferredWrappedTaskCompletionSource = this.CreateTaskCompletionSource(out this.wrappedTask);
+                        }
+
                         return this.wrappedTask;
                     }
                 }
@@ -346,6 +365,46 @@ namespace Microsoft.VisualStudio.Threading
         internal JoinableTaskCreationOptions CreationOptions
         {
             get { return this.creationOptions; }
+        }
+
+        /// <summary>
+        /// Creates a <see cref="TaskCompletionSource{T}"/> instance compatible with the type of <see cref="System.Threading.Tasks.Task"/>
+        /// that must eventuall be returned from the <see cref="Task"/> property.
+        /// </summary>
+        /// <param name="task">Receives the <see cref="System.Threading.Tasks.Task"/> object produced by the <see cref="TaskCompletionSource{T}"/>.</param>
+        /// <returns>The <see cref="TaskCompletionSource{T}"/>.</returns>
+        [SuppressMessage("Microsoft.Design", "CA1021:AvoidOutParameters", MessageId = "0#", Justification = "Internal, and necessary to avoid allocating a tuple.")]
+        protected internal virtual object CreateTaskCompletionSource(out Task task)
+        {
+            var tcs = new TaskCompletionSource<EmptyStruct>();
+            task = tcs.Task;
+            return tcs;
+        }
+
+        /// <summary>
+        /// Completes a <see cref="TaskCompletionSource{T}"/> by faulting with a given exception.
+        /// </summary>
+        /// <param name="taskCompletionSource">A <see cref="TaskCompletionSource{T}"/> previously created with <see cref="CreateTaskCompletionSource"/>.</param>
+        /// <param name="exception">The exception to complete the task with.</param>
+        protected internal virtual void ApplyExceptionToCompletionSource(object taskCompletionSource, Exception exception)
+        {
+            Requires.NotNull(exception, nameof(exception));
+            Requires.NotNull(taskCompletionSource, nameof(taskCompletionSource));
+
+            ((TaskCompletionSource<EmptyStruct>)taskCompletionSource).SetException(exception);
+        }
+
+        /// <summary>
+        /// Completes a <see cref="TaskCompletionSource{T}"/> by faulting with a given exception.
+        /// </summary>
+        /// <param name="taskCompletionSource">A <see cref="TaskCompletionSource{T}"/> previously created with <see cref="CreateTaskCompletionSource"/>.</param>
+        /// <param name="wrappedTask">The task whose result should be copied to the Task created by <paramref name="taskCompletionSource"/>.</param>
+        protected internal virtual void ApplyResultToCompletionSource(object taskCompletionSource, Task wrappedTask)
+        {
+            Requires.NotNull(wrappedTask, nameof(wrappedTask));
+            Requires.NotNull(taskCompletionSource, nameof(taskCompletionSource));
+
+            wrappedTask.ApplyResultTo((TaskCompletionSource<EmptyStruct>)taskCompletionSource);
         }
 
         #region Diagnostics collection
@@ -649,6 +708,18 @@ namespace Microsoft.VisualStudio.Threading
             }
         }
 
+        internal void PrepareToStartDeferred()
+        {
+            using (this.Factory.Context.NoMessagePumpSynchronizationContext.Apply())
+            {
+                lock (this.owner.Context.SyncContextLock)
+                {
+                    Verify.Operation((this.state & JoinableTaskFlags.Deferred) == JoinableTaskFlags.Deferred, Strings.JoinableTaskAlreadyStarted);
+                    this.state &= ~JoinableTaskFlags.Deferred;
+                }
+            }
+        }
+
         /// <summary>
         /// Gets an awaiter that is equivalent to calling <see cref="JoinAsync"/>.
         /// </summary>
@@ -663,14 +734,19 @@ namespace Microsoft.VisualStudio.Threading
         {
             Requires.NotNull(wrappedTask, nameof(wrappedTask));
 
+            object deferredWrappedTaskCompletionSource;
             using (this.Factory.Context.NoMessagePumpSynchronizationContext.Apply())
             {
                 lock (this.owner.Context.SyncContextLock)
                 {
-                    Assumes.Null(this.wrappedTask);
-                    this.wrappedTask = wrappedTask;
+                    Assumes.True(this.wrappedTask == null || this.deferredWrappedTaskCompletionSource != null);
+                    deferredWrappedTaskCompletionSource = this.deferredWrappedTaskCompletionSource;
+                    if (this.wrappedTask == null)
+                    {
+                        this.wrappedTask = wrappedTask;
+                    }
 
-                    if (wrappedTask.IsCompleted)
+                    if (this.wrappedTask.IsCompleted)
                     {
                         this.Complete();
                     }
@@ -685,6 +761,13 @@ namespace Microsoft.VisualStudio.Threading
                             TaskScheduler.Default);
                     }
                 }
+            }
+
+            // Ensure we're not holding a private lock since this can execute 3rd party continuation code.
+            Assumes.False(Monitor.IsEntered(this.owner.Context.SyncContextLock));
+            if (deferredWrappedTaskCompletionSource != null)
+            {
+                this.ApplyResultToCompletionSource(deferredWrappedTaskCompletionSource, wrappedTask);
             }
         }
 

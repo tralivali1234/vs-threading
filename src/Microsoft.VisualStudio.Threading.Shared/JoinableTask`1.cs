@@ -32,10 +32,11 @@ namespace Microsoft.VisualStudio.Threading
         /// </summary>
         /// <param name="owner">The instance that began the async operation.</param>
         /// <param name="synchronouslyBlocking">A value indicating whether the launching thread will synchronously block for this job's completion.</param>
+        /// <param name="deferredStart">A value indicating whether the joinable task will not execute till its associated <see cref="DeferredJoinableTask.Start"/> method is invoked.</param>
         /// <param name="creationOptions">The <see cref="JoinableTaskCreationOptions"/> used to customize the task's behavior.</param>
         /// <param name="initialDelegate">The entry method's info for diagnostics.</param>
-        internal JoinableTask(JoinableTaskFactory owner, bool synchronouslyBlocking, JoinableTaskCreationOptions creationOptions, Delegate initialDelegate)
-            : base(owner, synchronouslyBlocking, creationOptions, initialDelegate)
+        internal JoinableTask(JoinableTaskFactory owner, bool synchronouslyBlocking, bool deferredStart, JoinableTaskCreationOptions creationOptions, Delegate initialDelegate)
+            : base(owner, synchronouslyBlocking, deferredStart, creationOptions, initialDelegate)
         {
         }
 
@@ -86,6 +87,32 @@ namespace Microsoft.VisualStudio.Threading
         {
             base.CompleteOnCurrentThread();
             return this.Task.GetAwaiter().GetResult();
+        }
+
+        /// <inheritdoc/>
+        protected internal override object CreateTaskCompletionSource(out Task task)
+        {
+            var tcs = new TaskCompletionSource<T>();
+            task = tcs.Task;
+            return tcs;
+        }
+
+        /// <inheritdoc/>
+        protected internal override void ApplyResultToCompletionSource(object taskCompletionSource, Task wrappedTask)
+        {
+            Requires.NotNull(wrappedTask, nameof(wrappedTask));
+            Requires.NotNull(taskCompletionSource, nameof(taskCompletionSource));
+
+            ((Task<T>)wrappedTask).ApplyResultTo((TaskCompletionSource<T>)taskCompletionSource);
+        }
+
+        /// <inheritdoc/>
+        protected internal override void ApplyExceptionToCompletionSource(object taskCompletionSource, Exception exception)
+        {
+            Requires.NotNull(exception, nameof(exception));
+            Requires.NotNull(taskCompletionSource, nameof(taskCompletionSource));
+
+            ((TaskCompletionSource<T>)taskCompletionSource).SetException(exception);
         }
     }
 }

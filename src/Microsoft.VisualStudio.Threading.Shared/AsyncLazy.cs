@@ -133,6 +133,9 @@ namespace Microsoft.VisualStudio.Threading
                     Verify.FailOperation(Strings.ValueFactoryReentrancy);
                 }
 
+                DeferredJoinableTask<T> djt = default(DeferredJoinableTask<T>);
+                TaskCompletionSource<T> tcs = null;
+                Func<Task<T>> valueFactory = null;
                 lock (this.syncObject)
                 {
                     // Note that if multiple threads hit GetValueAsync() before
@@ -143,44 +146,65 @@ namespace Microsoft.VisualStudio.Threading
                     if (this.value == null)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        this.recursiveFactoryCheck.Value = RecursiveCheckSentinel;
-                        try
-                        {
-                            var valueFactory = this.valueFactory;
-                            this.valueFactory = null;
+                        valueFactory = this.valueFactory;
+                        this.valueFactory = null;
 
-                            if (this.jobFactory != null)
-                            {
-                                // Wrapping with RunAsync allows a future caller
-                                // to synchronously block the Main thread waiting for the result
-                                // without leading to deadlocks.
-                                this.joinableTask = this.jobFactory.RunAsync(valueFactory);
-                                this.value = this.joinableTask.Task;
-                                this.value.ContinueWith(
-                                    (_, state) =>
-                                    {
-                                        var that = (AsyncLazy<T>)state;
-                                        that.jobFactory = null;
-                                        that.joinableTask = null;
-                                    },
-                                    this,
-                                    TaskScheduler.Default);
-                            }
-                            else
-                            {
-                                this.value = valueFactory();
-                            }
-                        }
-                        catch (Exception ex)
+                        if (this.jobFactory != null)
                         {
-                            var tcs = new TaskCompletionSource<T>();
-                            tcs.SetException(ex);
+                            // Wrapping with RunAsync allows a future caller
+                            // to synchronously block the Main thread waiting for the result
+                            // without leading to deadlocks.
+                            djt = this.jobFactory.Create(valueFactory);
+                            this.joinableTask = djt.JoinableTask;
+                            this.value = this.joinableTask.Task;
+                            this.value.ContinueWith(
+                                (_, state) =>
+                                {
+                                    var that = (AsyncLazy<T>)state;
+                                    that.jobFactory = null;
+                                    that.joinableTask = null;
+                                },
+                                this,
+                                TaskScheduler.Default);
+                        }
+                        else
+                        {
+                            tcs = new TaskCompletionSource<T>();
                             this.value = tcs.Task;
                         }
-                        finally
+                    }
+                }
+
+                if (tcs != null || djt.JoinableTask != null)
+                {
+                    Assumes.NotNull(valueFactory);
+                    this.recursiveFactoryCheck.Value = RecursiveCheckSentinel;
+                    try
+                    {
+                        if (tcs != null)
                         {
-                            this.recursiveFactoryCheck.Value = null;
+                            valueFactory().ApplyResultTo(tcs);
                         }
+                        else
+                        {
+                            djt.Start();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (tcs != null)
+                        {
+                            tcs.SetException(ex);
+                        }
+                        else
+                        {
+                            // Internal error.
+                            throw;
+                        }
+                    }
+                    finally
+                    {
+                        this.recursiveFactoryCheck.Value = null;
                     }
                 }
             }

@@ -115,6 +115,15 @@ namespace Microsoft.VisualStudio.Threading {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to This JoinableTask has already started..
+        /// </summary>
+        internal static string JoinableTaskAlreadyStarted {
+            get {
+                return ResourceManager.GetString("JoinableTaskAlreadyStarted", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to JoinableTask does not belong to the context this collection was instantiated with..
         /// </summary>
         internal static string JoinableTaskContextAndCollectionMismatch {
@@ -183,6 +192,15 @@ namespace Microsoft.VisualStudio.Threading {
         internal static string STAThreadCallerNotAllowed {
             get {
                 return ResourceManager.GetString("STAThreadCallerNotAllowed", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to This struct has not been properly initialized..
+        /// </summary>
+        internal static string StructNotProperlyInitialized {
+            get {
+                return ResourceManager.GetString("StructNotProperlyInitialized", resourceCulture);
             }
         }
         

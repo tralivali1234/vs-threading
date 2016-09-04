@@ -8,6 +8,7 @@ namespace Microsoft.VisualStudio.Threading
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Linq;
     using System.Threading;
 
@@ -17,6 +18,7 @@ namespace Microsoft.VisualStudio.Threading
         /// The head of a singly linked list of records to track which task may process events of this task.
         /// This list should contain only tasks which need be completed synchronously, and depends on this task.
         /// </summary>
+        [DebuggerBrowsable(DebuggerBrowsableState.Never)]
         private DependentSynchronousTask dependingSynchronousTaskTracking;
 
         /// <summary>

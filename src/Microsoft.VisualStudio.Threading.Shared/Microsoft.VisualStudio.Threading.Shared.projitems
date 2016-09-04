@@ -6,7 +6,7 @@
     <SharedGUID>56941b77-5bdf-4b99-8df1-e130c046e2d7</SharedGUID>
   </PropertyGroup>
   <PropertyGroup Label="Configuration">
-    <Import_RootNamespace>Microsoft.VisualStudio.Threading.Shared</Import_RootNamespace>
+    <Import_RootNamespace>Microsoft.VisualStudio.Threading</Import_RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)AssemblyInfo.cs" />
@@ -23,6 +23,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)AsyncReaderWriterResourceLock.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AsyncSemaphore.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AwaitExtensions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)DeferredJoinableTask`1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)DeferredJoinableTask.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)DelegatingJoinableTaskFactory.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Dgml.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)EmptyStruct.cs" />

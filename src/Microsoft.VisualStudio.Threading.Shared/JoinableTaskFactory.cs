@@ -498,6 +498,25 @@ namespace Microsoft.VisualStudio.Threading
             return this.RunAsync(asyncMethod, synchronouslyBlocking: false, creationOptions: creationOptions);
         }
 
+        /// <summary>
+        /// Creates a new <see cref="JoinableTask"/> without executing its initial method until <see cref="DeferredJoinableTask.Start"/>
+        /// is called later.
+        /// </summary>
+        /// <param name="asyncMethod">The delegate to invoke when the <see cref="JoinableTask"/> is later started.</param>
+        /// <param name="creationOptions">Flags to apply to the new <see cref="JoinableTask"/>.</param>
+        /// <returns>A struct that contains both the created <see cref="JoinableTask"/> and the means to start it.</returns>
+        /// <remarks>
+        /// Constructing a <see cref="JoinableTask"/> in this way can be safely done while its caller is holding a private lock,
+        /// since the delegate is not invoked until some later time, when the caller has released the lock.
+        /// </remarks>
+        public DeferredJoinableTask Create(Func<Task> asyncMethod, JoinableTaskCreationOptions creationOptions = JoinableTaskCreationOptions.None)
+        {
+            const bool synchronouslyBlocking = false;
+            const bool deferredStart = true;
+            var joinableTask = new JoinableTask(this, synchronouslyBlocking, deferredStart, creationOptions, asyncMethod);
+            return new DeferredJoinableTask(joinableTask, asyncMethod);
+        }
+
         /// <summary>Runs the specified asynchronous method.</summary>
         /// <param name="asyncMethod">The asynchronous method to execute.</param>
         /// <param name="creationOptions">The <see cref="JoinableTaskCreationOptions"/> used to customize the task's behavior.</param>
@@ -523,7 +542,8 @@ namespace Microsoft.VisualStudio.Threading
         {
             Requires.NotNull(asyncMethod, nameof(asyncMethod));
 
-            var job = new JoinableTask(this, synchronouslyBlocking, creationOptions, entrypointOverride ?? asyncMethod);
+            const bool deferredStart = false;
+            var job = new JoinableTask(this, synchronouslyBlocking, deferredStart, creationOptions, entrypointOverride ?? asyncMethod);
             this.ExecuteJob<EmptyStruct>(asyncMethod, job);
             return job;
         }
@@ -569,6 +589,38 @@ namespace Microsoft.VisualStudio.Threading
         public JoinableTask<T> RunAsync<T>(Func<Task<T>> asyncMethod, JoinableTaskCreationOptions creationOptions)
         {
             return this.RunAsync(asyncMethod, synchronouslyBlocking: false, creationOptions: creationOptions);
+        }
+
+        /// <summary>
+        /// Creates a new <see cref="JoinableTask{T}"/> without executing its initial method until <see cref="DeferredJoinableTask{T}.Start"/>
+        /// is called later.
+        /// </summary>
+        /// <typeparam name="T">The type of value returned by the asynchronous operation.</typeparam>
+        /// <param name="asyncMethod">The delegate to invoke when the <see cref="JoinableTask{T}"/> is later started.</param>
+        /// <param name="creationOptions">Flags to apply to the new <see cref="JoinableTask{T}"/>.</param>
+        /// <returns>A struct that contains both the created <see cref="JoinableTask{T}"/> and the means to start it.</returns>
+        /// <remarks>
+        /// Constructing a <see cref="JoinableTask{T}"/> in this way can be safely done while its caller is holding a private lock,
+        /// since the delegate is not invoked until some later time, when the caller has released the lock.
+        /// </remarks>
+        public DeferredJoinableTask<T> Create<T>(Func<Task<T>> asyncMethod, JoinableTaskCreationOptions creationOptions = JoinableTaskCreationOptions.None)
+        {
+            const bool synchronouslyBlocking = false;
+            const bool deferredStart = true;
+            var joinableTask = new JoinableTask<T>(this, synchronouslyBlocking, deferredStart, creationOptions, asyncMethod);
+            return new DeferredJoinableTask<T>(joinableTask, asyncMethod);
+        }
+
+        /// <summary>
+        /// Starts execution of a deferred <see cref="JoinableTask"/>.
+        /// </summary>
+        internal void Start(JoinableTask joinableTask, Func<Task> asyncMethod)
+        {
+            Requires.NotNull(joinableTask, nameof(joinableTask));
+            joinableTask.PrepareToStartDeferred();
+
+            Requires.NotNull(asyncMethod, nameof(asyncMethod));
+            this.ExecuteJob<EmptyStruct>(asyncMethod, joinableTask);
         }
 
         internal void Post(SendOrPostCallback callback, object state, bool mainThreadAffinitized)
@@ -637,11 +689,13 @@ namespace Microsoft.VisualStudio.Threading
         {
             Requires.NotNull(asyncMethod, nameof(asyncMethod));
 
-            var job = new JoinableTask<T>(this, synchronouslyBlocking, creationOptions, asyncMethod);
+            const bool deferredStart = false;
+            var job = new JoinableTask<T>(this, synchronouslyBlocking, deferredStart, creationOptions, asyncMethod);
             this.ExecuteJob<T>(asyncMethod, job);
             return job;
         }
 
+        [SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes", Justification = "We forward all exceptions to another handler.")]
         private void ExecuteJob<T>(Func<Task> asyncMethod, JoinableTask job)
         {
             using (var framework = new RunFramework(this, job))
@@ -653,9 +707,8 @@ namespace Microsoft.VisualStudio.Threading
                 }
                 catch (Exception ex)
                 {
-                    var tcs = new TaskCompletionSource<T>();
-                    tcs.SetException(ex);
-                    asyncMethodResult = tcs.Task;
+                    var tcs = job.CreateTaskCompletionSource(out asyncMethodResult);
+                    job.ApplyExceptionToCompletionSource(tcs, ex);
                 }
 
                 job.SetWrappedTask(asyncMethodResult);
