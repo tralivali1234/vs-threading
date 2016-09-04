@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>값 팩토리가 같은 인스턴스의 값을 호출했습니다.</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>이 JoinableTask는 이미 시작 했다.</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>이 구조체 올바르게 초기화 되지 않습니다 있다.</value>
+  </data>
 </root>

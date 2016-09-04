@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>O alocador de valor chamou o valor na mesma instância.</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>Este JoinableTask já começou.</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>Este struct não foi inicializado corretamente.</value>
+  </data>
 </root>

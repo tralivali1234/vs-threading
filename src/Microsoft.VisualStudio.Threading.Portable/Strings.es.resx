@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>Este generador de valores ha llamado al valor en la misma instancia.</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>Este JoinableTask ya ha comenzado.</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>Esta estructura no se ha inicializado correctamente.</value>
+  </data>
 </root>

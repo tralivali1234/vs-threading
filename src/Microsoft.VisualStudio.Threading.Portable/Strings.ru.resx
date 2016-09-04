@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>Фабрика значений вызвала значение в том же экземпляре.</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>Этот JoinableTask уже началась.</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>Эта структура не был правильно инициализирован.</value>
+  </data>
 </root>

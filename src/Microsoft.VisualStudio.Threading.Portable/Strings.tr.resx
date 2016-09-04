@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>Değer fabrikası aynı örnekteki değeri çağırdı.</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>Bu JoinableTask başladı bile.</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>Bu yapı düzgün başlatılmadı.</value>
+  </data>
 </root>

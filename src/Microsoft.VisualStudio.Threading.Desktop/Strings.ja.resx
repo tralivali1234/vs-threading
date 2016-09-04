@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>値ファクトリが同じインスタンスの値を呼び出しました。</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>この JoinableTask は、すでに始まっています。</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>この構造体が正しく初期化されていません。</value>
+  </data>
 </root>

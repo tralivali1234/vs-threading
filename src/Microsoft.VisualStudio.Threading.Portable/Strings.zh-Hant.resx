@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>值 Factory 需要相同執行個體上的值。</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>這 JoinableTask 已經開始。</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>此結構未正確初始化。</value>
+  </data>
 </root>

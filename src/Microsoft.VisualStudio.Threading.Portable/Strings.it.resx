@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>La factory del valore ha richiesto il valore nella stessa istanza.</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>Questo JoinableTask ha già iniziato.</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>Questa struttura non è stata inizializzata correttamente.</value>
+  </data>
 </root>

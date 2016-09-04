@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>La fabrique de valeurs a fait appel à la valeur sur la même instance.</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>Cette JoinableTask a déjà commencé.</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>Cette structure n’a pas été initialisée correctement.</value>
+  </data>
 </root>

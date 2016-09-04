@@ -73,11 +73,11 @@
         </trans-unit>
         <trans-unit id="JoinableTaskAlreadyStarted" translate="yes" xml:space="preserve">
           <source>This JoinableTask has already started.</source>
-          <target state="new">This JoinableTask has already started.</target>
+          <target state="needs-review-translation" state-qualifier="mt-suggestion">Этот JoinableTask уже началась.</target>
         </trans-unit>
         <trans-unit id="StructNotProperlyInitialized" translate="yes" xml:space="preserve">
           <source>This struct has not been properly initialized.</source>
-          <target state="new">This struct has not been properly initialized.</target>
+          <target state="needs-review-translation" state-qualifier="mt-suggestion">Эта структура не был правильно инициализирован.</target>
         </trans-unit>
       </group>
     </body>

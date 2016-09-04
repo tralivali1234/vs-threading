@@ -61,4 +61,10 @@
   <data name="ValueFactoryReentrancy" xml:space="preserve">
     <value>值工厂已对相同实例调用了值。</value>
   </data>
+  <data name="JoinableTaskAlreadyStarted" xml:space="preserve">
+    <value>这 JoinableTask 已经开始。</value>
+  </data>
+  <data name="StructNotProperlyInitialized" xml:space="preserve">
+    <value>此结构未正确初始化。</value>
+  </data>
 </root>
