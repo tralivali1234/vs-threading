@@ -652,7 +652,7 @@ namespace Microsoft.VisualStudio.Threading
         /// <summary>
         /// Adds the specified joinable task to the applicable collection.
         /// </summary>
-        protected void Add(JoinableTask joinable)
+        protected internal void Add(JoinableTask joinable)
         {
             Requires.NotNull(joinable, nameof(joinable));
             if (this.jobCollection != null)
@@ -700,6 +700,7 @@ namespace Microsoft.VisualStudio.Threading
         [SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes", Justification = "We forward all exceptions to another handler.")]
         private void ExecuteJob<T>(Func<Task> asyncMethod, JoinableTask job)
         {
+            this.Context.OnJoinableTaskStarted(job);
             using (var framework = new RunFramework(this, job))
             {
                 Task asyncMethodResult;
@@ -962,7 +963,6 @@ namespace Microsoft.VisualStudio.Threading
 
                 this.factory = factory;
                 this.joinable = joinable;
-                this.factory.Add(joinable);
                 this.previousJoinable = this.factory.Context.AmbientTask;
                 this.factory.Context.AmbientTask = joinable;
                 this.syncContextRevert = this.joinable.ApplicableJobSyncContext.Apply();

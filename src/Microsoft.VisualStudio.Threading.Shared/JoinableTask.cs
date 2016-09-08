@@ -158,8 +158,9 @@ namespace Microsoft.VisualStudio.Threading
             }
 
             this.creationOptions = creationOptions;
-            this.owner.Context.OnJoinableTaskStarted(this);
             this.initialDelegate = initialDelegate;
+
+            this.owner.Add(this);
         }
 
         [Flags]

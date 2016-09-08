@@ -74,6 +74,22 @@
         }
 
         [StaFact]
+        public void AwaitingUnstartedDeferredJoinableTaskResolvesAfterCompletion()
+        {
+            var djt = this.asyncPump.Create(() => TplExtensions.CompletedTask);
+
+            var yieldingEvent = new AsyncManualResetEvent();
+            var awaitingTask = Task.Run(async delegate
+            {
+                await djt.JoinableTask.GetAwaiter().YieldAndNotify(yieldingEvent);
+            });
+
+            yieldingEvent.WaitAsync().Wait();
+            djt.Start();
+            awaitingTask.Wait(this.TimeoutToken);
+        }
+
+        [StaFact]
         public void Join_DoesNotStartUnstartedJoinableTask()
         {
             bool delegateStarted = false;
@@ -363,6 +379,76 @@
             }));
             djt.Start();
             Assert.IsType<ApplicationException>(djt.JoinableTask.Task.Exception.InnerException);
+        }
+
+        [StaFact]
+        public void DeferredTasksDoNotLeak()
+        {
+            this.CheckGCPressure(
+                delegate
+                {
+                    var djt = this.asyncPump.Create(() => TplExtensions.CompletedTask);
+                    djt.Start();
+                },
+                -1);
+        }
+
+        [StaFact]
+        public void Create_NeverStartedTasksDoNotLeak_NoAssociatedCollection()
+        {
+            this.CheckGCPressure(
+                delegate
+                {
+                    this.context.Factory.Create(() => TplExtensions.CompletedTask);
+                },
+                -1);
+        }
+
+        [StaFact]
+        public void Create_NeverStartedTasksDoNotLeak_AssociatedCollection()
+        {
+            this.CheckGCPressure(
+                delegate
+                {
+                    this.asyncPump.Create(() => TplExtensions.CompletedTask);
+                },
+                -1);
+        }
+
+        /// <summary>
+        /// Verifies that an unstarted task still belongs to a default <see cref="JoinableTaskCollection"/> that its
+        /// owning <see cref="JoinableTaskFactory"/> is associated with.
+        /// This is important because as the <see cref="JoinableTask"/> itself may be visible to others before it has
+        /// been started, folks who are aware of the task, and its <see cref="JoinableTaskCollection"/> should be able to
+        /// await on *either* and know it won't unblock until the task has started and finished.
+        /// </summary>
+        [StaFact]
+        public void DeferredTasksBelongToDefaultCollection()
+        {
+            var evt = new AsyncManualResetEvent(allowInliningAwaiters: true);
+            var djt = this.asyncPump.Create(() => evt.WaitAsync());
+            Assert.NotEmpty(this.joinableCollection);
+            djt.Start();
+            Assert.NotEmpty(this.joinableCollection);
+            evt.Set();
+            Assert.Empty(this.joinableCollection);
+        }
+
+        [StaFact]
+        public void UnstartedTaskAddedToUnrelatedCollection()
+        {
+            var collection = this.context.CreateCollection();
+            var djt = this.asyncPump.Create(() => TplExtensions.CompletedTask);
+
+            // Add the unstarted task to the collection, and assert that it's part of the collection.
+            collection.Add(djt.JoinableTask);
+            Assert.NotEmpty(collection);
+            var collectionJoinTask = collection.JoinTillEmptyAsync();
+            Assert.False(collectionJoinTask.IsCompleted);
+
+            // Now start and complete the task. Confirm that it is removed from the collection.
+            djt.Start();
+            Assert.Empty(collection);
         }
     }
 }
