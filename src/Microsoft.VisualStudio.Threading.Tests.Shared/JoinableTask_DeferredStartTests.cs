@@ -450,5 +450,15 @@
             djt.Start();
             Assert.Empty(collection);
         }
+
+        [StaFact]
+        public void JoinTillEmptyAsync_CompletesAfterAbandonedDeferredTaskIsCollected()
+        {
+            var djt = this.asyncPump.Create(() => TplExtensions.CompletedTask);
+            var joinAsyncTask = this.joinableCollection.JoinTillEmptyAsync();
+            Assert.False(joinAsyncTask.IsCompleted);
+            djt = default(DeferredJoinableTask); // clear all references to the JoinableTask
+            joinAsyncTask.Wait(this.TimeoutToken);
+        }
     }
 }
