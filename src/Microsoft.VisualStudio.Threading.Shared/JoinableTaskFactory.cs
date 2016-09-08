@@ -508,6 +508,7 @@ namespace Microsoft.VisualStudio.Threading
         /// <remarks>
         /// Constructing a <see cref="JoinableTask"/> in this way can be safely done while its caller is holding a private lock,
         /// since the delegate is not invoked until some later time, when the caller has released the lock.
+        /// Any context inherited by this <see cref="JoinableTask"/> is captured when the task is started, rather than when it is created.
         /// </remarks>
         public DeferredJoinableTask Create(Func<Task> asyncMethod, JoinableTaskCreationOptions creationOptions = JoinableTaskCreationOptions.None)
         {
@@ -602,6 +603,7 @@ namespace Microsoft.VisualStudio.Threading
         /// <remarks>
         /// Constructing a <see cref="JoinableTask{T}"/> in this way can be safely done while its caller is holding a private lock,
         /// since the delegate is not invoked until some later time, when the caller has released the lock.
+        /// Any context inherited by this <see cref="JoinableTask"/> is captured when the task is started, rather than when it is created.
         /// </remarks>
         public DeferredJoinableTask<T> Create<T>(Func<Task<T>> asyncMethod, JoinableTaskCreationOptions creationOptions = JoinableTaskCreationOptions.None)
         {
