@@ -7,15 +7,13 @@
 namespace Microsoft.VisualStudio.Threading
 {
     using System;
-    using System.Collections.Generic;
-    using System.Text;
     using System.Threading.Tasks;
 
     /// <summary>
     /// Describes a JoinableTask created with <see cref="JoinableTaskFactory.Create(Func{Task}, JoinableTaskCreationOptions)"/>
     /// that does not start until <see cref="Start"/> is later invoked.
     /// </summary>
-    public struct DeferredJoinableTask : IEquatable<DeferredJoinableTask>
+    public struct DeferredJoinableTask : IEquatable<DeferredJoinableTask>, IDisposable
     {
         /// <summary>
         /// The delegate to invoke when the task is started.
@@ -66,8 +64,23 @@ namespace Microsoft.VisualStudio.Threading
 
             this.JoinableTask.Factory.Start(this.JoinableTask, this.invocationDelegate);
 
-            // Allow GC to perhaps collect this delegate more quickly.
+            // Allow GC to perhaps collect this delegate more quickly, and effectively mark this instance as started.
             this.invocationDelegate = null;
+        }
+
+        /// <summary>
+        /// Terminates the JoinableTask if it hasn't started yet.
+        /// </summary>
+        public void Dispose()
+        {
+            if (this.invocationDelegate != null)
+            {
+                // This JoinableTask did not start during the allowed timeframe.
+                // In this case, an exception was probably thrown within the using block that created this deferred task.
+                // Abort the JoinableTask so that anyone waiting on it throws, and it no longer belongs to JoinableTaskCollections.
+                this.invocationDelegate = null;
+                this.JoinableTask.Factory.Start(this.JoinableTask, () => TplExtensions.CanceledTask);
+            }
         }
 
         /// <inheritdoc />

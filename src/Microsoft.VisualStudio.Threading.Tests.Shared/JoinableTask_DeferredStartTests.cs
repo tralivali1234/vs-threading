@@ -454,11 +454,17 @@
         [StaFact]
         public void JoinTillEmptyAsync_CompletesAfterAbandonedDeferredTaskIsCollected()
         {
-            var djt = this.asyncPump.Create(() => TplExtensions.CompletedTask);
-            var joinAsyncTask = this.joinableCollection.JoinTillEmptyAsync();
-            Assert.False(joinAsyncTask.IsCompleted);
-            djt = default(DeferredJoinableTask); // clear all references to the JoinableTask
-            joinAsyncTask.Wait(this.TimeoutToken);
+            Task joinAsyncTask;
+            Task joinableTask;
+            using (var djt = this.asyncPump.Create(() => TplExtensions.CompletedTask))
+            {
+                joinAsyncTask = this.joinableCollection.JoinTillEmptyAsync();
+                Assert.False(joinAsyncTask.IsCompleted);
+                joinableTask = djt.JoinableTask.Task;
+            }
+
+            Assert.True(joinableTask.IsCanceled);
+            Assert.True(joinAsyncTask.Wait(UnexpectedTimeout));
         }
     }
 }
