@@ -976,6 +976,7 @@
         }
 
         [StaFact, Trait("Stress", "true")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // very slow test
         public async Task ResourceLockStress()
         {
             const int MaxLockAcquisitions = -1;

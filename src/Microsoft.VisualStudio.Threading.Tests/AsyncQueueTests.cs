@@ -423,6 +423,7 @@
         }
 
         [Fact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // flaky test
         public void UnusedQueueGCPressure()
         {
             this.CheckGCPressure(

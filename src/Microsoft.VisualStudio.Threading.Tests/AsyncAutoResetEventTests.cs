@@ -180,6 +180,7 @@
         /// Verifies that long-lived, uncanceled CancellationTokens do not result in leaking memory.
         /// </summary>
         [Fact, Trait("TestCategory", "FailsInCloudTest")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // flaky test
         public void WaitAsync_WithCancellationToken_DoesNotLeakWhenNotCanceled()
         {
             var cts = new CancellationTokenSource();

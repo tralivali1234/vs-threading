@@ -2589,6 +2589,7 @@
         /// to check for thread-safety and deadlocks.
         /// </summary>
         [StaFact]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // very slow test
         public void PostStress()
         {
             int outstandingMessages = 0;
@@ -2825,6 +2826,7 @@
         }
 
         [StaFact, Trait("Stress", "true"), Trait("TestCategory", "FailsInCloudTest"), Trait("FailsInLocalBatch", "true")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // flaky test
         public void SwitchToMainThreadMemoryLeak()
         {
             this.CheckGCPressure(
@@ -2920,6 +2922,7 @@
         }
 
         [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // very slow test
         public void RunSynchronouslyTaskNoYieldGCPressure()
         {
             this.CheckGCPressure(delegate
@@ -2932,6 +2935,7 @@
         }
 
         [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // flaky test
         public void RunSynchronouslyTaskOfTNoYieldGCPressure()
         {
             Task<object> completedTask = Task.FromResult<object>(null);
@@ -2946,6 +2950,7 @@
         }
 
         [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest"), Trait("FailsInLocalBatch", "true")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // flaky test
         public void RunSynchronouslyTaskWithYieldGCPressure()
         {
             this.CheckGCPressure(delegate
@@ -2958,6 +2963,7 @@
         }
 
         [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest"), Trait("FailsInLocalBatch", "true")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // very slow test
         public void RunSynchronouslyTaskOfTWithYieldGCPressure()
         {
             Task<object> completedTask = Task.FromResult<object>(null);

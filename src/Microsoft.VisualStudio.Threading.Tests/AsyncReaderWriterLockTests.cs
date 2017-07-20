@@ -468,6 +468,7 @@
         }
 
         [StaFact, Trait("Stress", "true")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // very slow test
         public async Task LockStress()
         {
             const int MaxLockAcquisitions = -1;
@@ -480,6 +481,7 @@
         }
 
         [StaFact, Trait("Stress", "true"), Trait("TestCategory", "FailsInCloudTest")]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // very slow test
         public async Task CancellationStress()
         {
             const int MaxLockAcquisitions = -1;
@@ -2265,6 +2267,7 @@
         }
 
         [StaFact]
+        [Trait("Category", "SkipWhenLiveUnitTesting")] // very slow test
         public async Task MitigationAgainstAccidentalExclusiveLockConcurrency()
         {
             using (await this.asyncLock.UpgradeableReadLockAsync())
