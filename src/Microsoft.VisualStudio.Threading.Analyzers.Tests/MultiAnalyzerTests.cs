@@ -44,6 +44,12 @@ class Test {
     }
 
     Task BarAsync() => null;
+
+    static void SetTaskSourceIfCompleted<T>(Task<T> task, TaskCompletionSource<T> tcs) {
+        if (task.IsCompleted) {
+            tcs.SetResult(task.Result);
+        }
+    }
 }";
 
             this.VerifyNoMoreThanOneDiagnosticPerLine(test);
@@ -241,11 +247,29 @@ public class Test {
             this.VerifyCSharpDiagnostic(test);
         }
 
-        private void VerifyNoMoreThanOneDiagnosticPerLine(string test)
+        /// <summary>
+        /// Verifies that no reference to System.ValueTuple exists,
+        /// so we know the analyzers will work on VS2015.
+        /// </summary>
+        /// <remarks>
+        /// We have to reference the assembly during compilation due to
+        /// https://github.com/dotnet/roslyn/issues/18629
+        /// So this unit test guards that we don't accidentally require the assembly
+        /// at runtime.
+        /// </remarks>
+        [Fact]
+        public void NoValueTupleReference()
+        {
+            var refAssemblies = typeof(VSTHRD001UseSwitchToMainThreadAsyncAnalyzer)
+                .Assembly.GetReferencedAssemblies();
+            Assert.False(refAssemblies.Any(a => a.Name.Equals("System.ValueTuple", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        private void VerifyNoMoreThanOneDiagnosticPerLine(string test, bool hasEntrypoint = false)
         {
             this.LogFileContent(test);
             ImmutableArray<DiagnosticAnalyzer> analyzers = this.GetCSharpDiagnosticAnalyzers();
-            var actualResults = GetSortedDiagnostics(new[] { test }, LanguageNames.CSharp, analyzers, false);
+            var actualResults = GetSortedDiagnostics(new[] { test }, LanguageNames.CSharp, analyzers, hasEntrypoint);
             string diagnosticsOutput = actualResults.Any() ? FormatDiagnostics(analyzers, actualResults.ToArray()) : "    NONE.";
             this.logger.WriteLine("Actual diagnostics:\n" + diagnosticsOutput);
 

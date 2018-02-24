@@ -35,6 +35,7 @@
             id: Id,
             title: Strings.VSTHRD103_Title,
             messageFormat: Strings.VSTHRD103_MessageFormat,
+            helpLinkUri: Utils.GetHelpLink(Id),
             category: "Usage",
             defaultSeverity: DiagnosticSeverity.Warning,
             isEnabledByDefault: true);
@@ -89,6 +90,8 @@
                         return;
                     }
 
+                    MethodDeclarationSyntax invocationDeclaringMethod = invocationExpressionSyntax.FirstAncestorOrSelf<MethodDeclarationSyntax>();
+
                     // Also consider all method calls to check for Async-suffixed alternatives.
                     ExpressionSyntax invokedMethodName = Utils.IsolateMethodName(invocationExpressionSyntax);
                     var symbolInfo = context.SemanticModel.GetSymbolInfo(invocationExpressionSyntax, context.CancellationToken);
@@ -101,8 +104,13 @@
                             invocationExpressionSyntax.Expression.GetLocation().SourceSpan.Start,
                             symbolInfo.Symbol.ContainingType,
                             asyncMethodName,
-                            includeReducedExtensionMethods: true).OfType<IMethodSymbol>();
-                        if (asyncMethodMatches.Any(m => !m.IsObsolete()))
+                            includeReducedExtensionMethods: true).OfType<IMethodSymbol>()
+                            .Where(m => !m.IsObsolete())
+                            .Where(m => HasSupersetOfParameterTypes(m, methodSymbol))
+                            .Where(m => m.Name != invocationDeclaringMethod?.Identifier.Text)
+                            .Where(Utils.HasAsyncCompatibleReturnType);
+
+                        if (asyncMethodMatches.Any())
                         {
                             // An async alternative exists.
                             var properties = ImmutableDictionary<string, string>.Empty
@@ -118,6 +126,19 @@
                         }
                     }
                 }
+            }
+
+            /// <summary>
+            /// Determines whether the given method has parameters to cover all the parameter types in another method.
+            /// </summary>
+            /// <param name="candidateMethod">The candidate method.</param>
+            /// <param name="baselineMethod">The baseline method.</param>
+            /// <returns>
+            ///   <c>true</c> if <paramref name="candidateMethod"/> has a superset of parameter types found in <paramref name="baselineMethod"/>; otherwise <c>false</c>.
+            /// </returns>
+            private static bool HasSupersetOfParameterTypes(IMethodSymbol candidateMethod, IMethodSymbol baselineMethod)
+            {
+                return candidateMethod.Parameters.All(candidateParameter => baselineMethod.Parameters.Any(baselineParameter => baselineParameter.Type?.Equals(candidateParameter.Type) ?? false));
             }
 
             private static bool IsInTaskReturningMethodOrDelegate(SyntaxNodeAnalysisContext context)
@@ -145,27 +166,25 @@
                     && returnType.BelongsToNamespace(Namespaces.SystemThreadingTasks);
             }
 
-            private static bool InspectMemberAccess(SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax memberAccessSyntax, IReadOnlyList<CommonInterest.SyncBlockingMethod> problematicMethods)
+            private static bool InspectMemberAccess(SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax memberAccessSyntax, IEnumerable<CommonInterest.SyncBlockingMethod> problematicMethods)
             {
                 if (memberAccessSyntax == null)
                 {
                     return false;
                 }
 
-                var typeReceiver = context.SemanticModel.GetTypeInfo(memberAccessSyntax.Expression).Type;
-                if (typeReceiver != null)
+                var memberSymbol = context.SemanticModel.GetSymbolInfo(memberAccessSyntax).Symbol;
+                if (memberSymbol != null)
                 {
                     foreach (var item in problematicMethods)
                     {
-                        if (memberAccessSyntax.Name.Identifier.Text == item.MethodName &&
-                            typeReceiver.Name == item.ContainingTypeName &&
-                            typeReceiver.BelongsToNamespace(item.ContainingTypeNamespace))
+                        if (item.Method.IsMatch(memberSymbol))
                         {
                             var location = memberAccessSyntax.Name.GetLocation();
                             var properties = ImmutableDictionary<string, string>.Empty;
                             DiagnosticDescriptor descriptor;
                             var messageArgs = new List<object>(2);
-                            messageArgs.Add(item.MethodName);
+                            messageArgs.Add(item.Method.Name);
                             if (item.AsyncAlternativeMethodName != null)
                             {
                                 properties = properties.Add(VSTHRD103UseAsyncOptionCodeFix.AsyncMethodKeyName, item.AsyncAlternativeMethodName);

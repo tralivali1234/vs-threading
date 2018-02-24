@@ -22,7 +22,7 @@
     <comment>"await" is a C# keyword and should not be translated.</comment>
   </data>
   <data name="VSTHRD002_MessageFormat" xml:space="preserve">
-    <value>同步等待任务或 awaiter 可能导致死锁。改用 JoinableTaskFactory.Run。</value>
+    <value>同步等待任务或 awaiter 可能导致死锁。请等待或改用 JoinableTaskFactory.Run。</value>
     <comment>"await" is a C# keyword and should not be translated.</comment>
   </data>
   <data name="VSTHRD002_Title" xml:space="preserve">
@@ -31,6 +31,7 @@
   <data name="VSTHRD010_MessageFormat" xml:space="preserve">
     <value>应对主线程显式使用 Visual Studio 服务“{0}”。
 首先调用 ThreadHelper.ThrowIfNotOnUIThread() 或等待 JoinableTaskFactory.SwitchToMainThreadAsync()。</value>
+    <comment>{0} is a type name and {1} is the name of a method that throws if not called from the main thread.</comment>
   </data>
   <data name="VSTHRD010_Title" xml:space="preserve">
     <value>使用 UI 线程中的 VS 服务</value>
@@ -104,5 +105,40 @@
   </data>
   <data name="VSTHRD105_Title" xml:space="preserve">
     <value>避免假定 TaskScheduler.Current 的方法重载</value>
+  </data>
+  <data name="VSTHRD012_MessageFormat" xml:space="preserve">
+    <value>在此调用中提供 JoinableTaskFactory 的实例（或其他重载）以避免主线程死锁。</value>
+  </data>
+  <data name="VSTHRD012_Title" xml:space="preserve">
+    <value>在允许的地方提供 JoinableTaskFactory</value>
+  </data>
+  <data name="VSTHRD104_MessageFormat" xml:space="preserve">
+    <value>公开此方法的异步版（不同步阻止）。然后简化此方法以在 JoinableTaskFactory.Run 委托内调用该异步方法。</value>
+  </data>
+  <data name="VSTHRD104_Title" xml:space="preserve">
+    <value>提供异步方法</value>
+  </data>
+  <data name="VSTHRD001_MessageFormat" xml:space="preserve">
+    <value>等待 JoinableTaskFactory.SwitchToMainThreadAsync() 切换到 UI 线程，而非切换到可死锁或要求指定优先级的 API。</value>
+  </data>
+  <data name="VSTHRD001_Title" xml:space="preserve">
+    <value>避免旧线程切换 API</value>
+    <comment>thread switching APIs refers to Visual Studio SDK or .NET methods that can be used to switch threads, but are obsolete and should be avoided.</comment>
+  </data>
+  <data name="VSTHRD107_MessageFormat" xml:space="preserve">
+    <value>"using" 表达式缺少 await 运算符。</value>
+    <comment>"await" and "using" are C# keywords and should not be translated.</comment>
+  </data>
+  <data name="VSTHRD107_Title" xml:space="preserve">
+    <value>using 表达式中的 Await Task</value>
+    <comment>"await Task" is a C# compound term, and "using" is a C# keyword. These should not be translated.</comment>
+  </data>
+  <data name="VSTHRD107_CodeFix_Title" xml:space="preserve">
+    <value>等待 using 表达式</value>
+    <comment>"await" and "using" are C# keywords and should not be translated.</comment>
+  </data>
+  <data name="VSTHRD002_CodeFix_Await_Title" xml:space="preserve">
+    <value>改用 await</value>
+    <comment>"await" is a C# keyword and should not be translated.</comment>
   </data>
 </root>

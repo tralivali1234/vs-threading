@@ -13,7 +13,6 @@
     <Copyright>© Microsoft Corporation. All rights reserved.</Copyright>
     <PackageProjectUrl>https://github.com/Microsoft/vs-threading</PackageProjectUrl>
     <PackageIconUrl>https://aka.ms/VsExtensibilityIcon</PackageIconUrl>
-    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     <PackageReleaseNotes>https://go.microsoft.com/fwlink/?LinkID=746387</PackageReleaseNotes>
 
     <DebugType>full</DebugType>
@@ -41,6 +40,7 @@
     </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
+    <Content Include="build\**" Pack="true" PackagePath="build\" />
     <Content Include="tools\*.ps1" Pack="true" PackagePath="tools\" />
   </ItemGroup>
   <ItemGroup>
@@ -53,16 +53,16 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="1.2.0" />
-    <PackageReference Include="MicroBuild.VisualStudio" Version="2.0.40" />
-    <PackageReference Include="PdbGit" Version="3.0.41" />
+    <PackageReference Include="MicroBuild.VisualStudio" Version="$(MicroBuildVersion)" />
+    <PackageReference Include="GitLink" Version="3.2.0-unstable0014" PrivateAssets="all" />
+    <PackageReference Include="System.ValueTuple" Version="4.3.0" />
+    <PackageReference Include="AsyncUsageAnalyzers" Version="1.0.0-alpha003" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\Multilingual App Toolkit\Microsoft.Multilingual.ResxResources.targets" Label="MultilingualAppToolkit" Condition="Exists('$(MSBuildExtensionsPath)\Microsoft\Multilingual App Toolkit\v$(MultilingualAppToolkitVersion)\Microsoft.Multilingual.ResxResources.targets')" />
   <Target Name="MATPrerequisite" BeforeTargets="PrepareForBuild" Condition="!Exists('$(MSBuildExtensionsPath)\Microsoft\Multilingual App Toolkit\Microsoft.Multilingual.ResxResources.targets')" Label="MultilingualAppToolkit">
     <Warning Text="$(MSBuildProjectFile) is Multilingual build enabled, but the Multilingual App Toolkit is unavailable during the build. If building with Visual Studio, please check to ensure that toolkit is properly installed." />
   </Target>
-  <Target Name="PackBuildOutputs"
-          BeforeTargets="_GetPackageFiles"
-          DependsOnTargets="SatelliteDllsProjectOutputGroup;DebugSymbolsProjectOutputGroup">
+  <Target Name="PackBuildOutputs" BeforeTargets="_GetPackageFiles" DependsOnTargets="SatelliteDllsProjectOutputGroup;DebugSymbolsProjectOutputGroup">
     <ItemGroup>
       <Content Include="$(TargetPath)" Pack="true" PackagePath="analyzers\cs\" />
       <!--<Content Include="@(DebugSymbolsProjectOutputGroupOutput)" Pack="true" PackagePath="analyzers\cs\" />-->

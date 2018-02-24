@@ -353,7 +353,7 @@ namespace Microsoft.VisualStudio.Threading
         /// </remarks>
         protected virtual bool CanCurrentThreadHoldActiveLock
         {
-#if NET45
+#if DESKTOP || NETSTANDARD2_0
             get { return Thread.CurrentThread.GetApartmentState() != ApartmentState.STA; }
 #else
             get { return true; }
@@ -939,8 +939,7 @@ namespace Microsoft.VisualStudio.Threading
                     }
                     else
                     {
-                        bool hasRead, hasUpgradeableRead, hasWrite;
-                        this.AggregateLockStackKinds(awaiter, out hasRead, out hasUpgradeableRead, out hasWrite);
+                        this.AggregateLockStackKinds(awaiter, out bool hasRead, out bool hasUpgradeableRead, out bool hasWrite);
                         switch (awaiter.Kind)
                         {
                             case LockKind.Read:
@@ -1023,7 +1022,7 @@ namespace Microsoft.VisualStudio.Threading
                 {
                     this.etw.WaitStart(awaiter);
 
-#if NET45
+#if DESKTOP || NETSTANDARD2_0
                     // If the lock is immediately available, we don't need to coordinate with other threads.
                     // But if it is NOT available, we'd have to wait potentially for other threads to do more work.
                     Debugger.NotifyOfCrossThreadDependency();
@@ -1514,8 +1513,7 @@ namespace Microsoft.VisualStudio.Threading
                 // We also avoid executing the synchronous portions all in a row and awaiting them all
                 // because that too would violate an individual callback's sense of isolation in a write lock.
                 List<Exception> exceptions = null;
-                Func<Task> callback;
-                while (this.TryDequeueBeforeWriteReleasedCallback(out callback))
+                while (this.TryDequeueBeforeWriteReleasedCallback(out Func<Task> callback))
                 {
                     try
                     {
@@ -2118,7 +2116,7 @@ namespace Microsoft.VisualStudio.Threading
             /// </summary>
             private Task releaseAsyncTask;
 
-#if NET45
+#if DESKTOP || NETSTANDARD2_0
             /// <summary>
             /// The stacktrace of the caller originally requesting the lock.
             /// </summary>
@@ -2152,7 +2150,7 @@ namespace Microsoft.VisualStudio.Threading
                 this.options = options;
                 this.cancellationToken = cancellationToken;
                 this.nestingLock = lck.GetFirstActiveSelfOrAncestor(lck.topAwaiter.Value);
-#if NET45
+#if DESKTOP || NETSTANDARD2_0
                 this.requestingStackTrace = lck.captureDiagnostics ? new StackTrace(2, true) : null;
 #endif
             }
@@ -2162,7 +2160,21 @@ namespace Microsoft.VisualStudio.Threading
             /// </summary>
             public bool IsCompleted
             {
-                get { return this.cancellationToken.IsCancellationRequested || this.fault != null || this.LockIssued; }
+                get
+                {
+                    if (this.fault != null)
+                    {
+                        return true;
+                    }
+
+                    // If lock has already been issued, we have to switch to the right context, and ignore the CancellationToken.
+                    if (this.lck.IsLockActive(this, considerStaActive: true))
+                    {
+                        return this.lck.IsLockSupportingContext(this);
+                    }
+
+                    return this.cancellationToken.IsCancellationRequested;
+                }
             }
 
             /// <summary>
@@ -2173,7 +2185,7 @@ namespace Microsoft.VisualStudio.Threading
                 get { return this.lck; }
             }
 
-#if NET45
+#if DESKTOP || NETSTANDARD2_0
             /// <summary>
             /// Gets the stack trace of the requestor of this lock.
             /// </summary>
@@ -2274,6 +2286,11 @@ namespace Microsoft.VisualStudio.Threading
 
                 this.cancellationRegistration = this.cancellationToken.Register(CancellationResponseAction, this, useSynchronizationContext: false);
                 this.lck.PendAwaiter(this);
+
+                if (this.cancellationToken.IsCancellationRequested && this.cancellationRegistration == default(CancellationTokenRegistration))
+                {
+                    CancellationResponder(this);
+                }
             }
 
             /// <summary>

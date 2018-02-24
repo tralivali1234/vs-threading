@@ -467,7 +467,8 @@ namespace Microsoft.VisualStudio.Threading
             get
             {
                 return (this.state & JoinableTaskFlags.StartedSynchronously) == JoinableTaskFlags.StartedSynchronously
-                    && (this.state & JoinableTaskFlags.StartedOnMainThread) == JoinableTaskFlags.None;
+                    && (this.state & JoinableTaskFlags.StartedOnMainThread) != JoinableTaskFlags.StartedOnMainThread
+                    && (this.state & JoinableTaskFlags.CompleteRequested) != JoinableTaskFlags.CompleteRequested;
             }
         }
 
@@ -477,9 +478,24 @@ namespace Microsoft.VisualStudio.Threading
             get
             {
                 return (this.state & JoinableTaskFlags.StartedSynchronously) == JoinableTaskFlags.StartedSynchronously
-                && (this.state & JoinableTaskFlags.StartedOnMainThread) == JoinableTaskFlags.StartedOnMainThread;
+                    && (this.state & JoinableTaskFlags.StartedOnMainThread) == JoinableTaskFlags.StartedOnMainThread
+                    && (this.state & JoinableTaskFlags.CompleteRequested) != JoinableTaskFlags.CompleteRequested;
             }
         }
+
+        /// <summary>
+        /// Gets a value indicating whether an awaiter should capture the
+        /// <see cref="SynchronizationContext"/>.
+        /// </summary>
+        /// <remarks>
+        /// As a library, we generally wouldn't capture the <see cref="SynchronizationContext"/>
+        /// when awaiting, except that where our thread is synchronously blocking anyway, it is actually
+        /// more efficient to capture the <see cref="SynchronizationContext"/> so that the continuation
+        /// will resume on the blocking thread instead of occupying yet another one in order to execute.
+        /// In fact, when threadpool starvation conditions exist, resuming on the calling thread
+        /// can avoid significant delays in executing an often trivial continuation.
+        /// </remarks>
+        internal static bool AwaitShouldCaptureSyncContext => SynchronizationContext.Current is JoinableTaskSynchronizationContext;
 
         /// <summary>
         /// Synchronously blocks the calling thread until the operation has completed.
@@ -516,7 +532,7 @@ namespace Microsoft.VisualStudio.Threading
 
             using (this.AmbientJobJoinsThis())
             {
-                await this.Task.WithCancellation(cancellationToken).ConfigureAwait(false);
+                await this.Task.WithCancellation(AwaitShouldCaptureSyncContext, cancellationToken).ConfigureAwait(AwaitShouldCaptureSyncContext);
             }
         }
 
@@ -738,8 +754,7 @@ namespace Microsoft.VisualStudio.Threading
             {
                 lock (this.owner.Context.SyncContextLock)
                 {
-                    int refCount;
-                    if (this.childOrJoinedJobs != null && this.childOrJoinedJobs.TryGetValue(joinChild, out refCount))
+                    if (this.childOrJoinedJobs != null && this.childOrJoinedJobs.TryGetValue(joinChild, out int refCount))
                     {
                         if (refCount == 1)
                         {
@@ -828,9 +843,7 @@ namespace Microsoft.VisualStudio.Threading
                         HashSet<JoinableTask> visited = null;
                         while (!this.IsCompleteRequested)
                         {
-                            SingleExecuteProtector work;
-                            Task tryAgainAfter;
-                            if (this.TryDequeueSelfOrDependencies(onMainThread, ref visited, out work, out tryAgainAfter))
+                            if (this.TryDequeueSelfOrDependencies(onMainThread, ref visited, out SingleExecuteProtector work, out Task tryAgainAfter))
                             {
                                 work.TryExecute();
                             }
@@ -873,8 +886,7 @@ namespace Microsoft.VisualStudio.Threading
                 // back to the threadpool so it still gets done.
                 if (this.threadPoolQueue?.Count > 0)
                 {
-                    SingleExecuteProtector executor;
-                    while (this.threadPoolQueue.TryDequeue(out executor))
+                    while (this.threadPoolQueue.TryDequeue(out SingleExecuteProtector executor))
                     {
                         ThreadPool.QueueUserWorkItem(SingleExecuteProtector.ExecuteOnceWaitCallback, executor);
                     }
@@ -967,8 +979,7 @@ namespace Microsoft.VisualStudio.Threading
 
                         if (this.pendingEventSource != null)
                         {
-                            JoinableTask pendingSource;
-                            if (this.pendingEventSource.TryGetTarget(out pendingSource) && pendingSource.IsDependingSynchronousTask(this))
+                            if (this.pendingEventSource.TryGetTarget(out JoinableTask pendingSource) && pendingSource.IsDependingSynchronousTask(this))
                             {
                                 var queue = onMainThread ? pendingSource.mainThreadQueue : pendingSource.threadPoolQueue;
                                 if (queue != null && !queue.IsCompleted && queue.TryDequeue(out work))
@@ -1005,7 +1016,7 @@ namespace Microsoft.VisualStudio.Threading
                     this.pendingEventCount = 0;
 
                     work = null;
-                    tryAgainAfter = this.QueueNeedProcessEvent;
+                    tryAgainAfter = this.IsCompleteRequested ? null : this.QueueNeedProcessEvent;
                     return false;
                 }
             }
@@ -1016,7 +1027,7 @@ namespace Microsoft.VisualStudio.Threading
             Requires.NotNull(visited, nameof(visited));
             Report.IfNot(Monitor.IsEntered(this.owner.Context.SyncContextLock));
 
-            // We only need find the first work item.
+            // We only need to find the first work item.
             work = null;
             if (visited.Add(this))
             {
@@ -1067,8 +1078,7 @@ namespace Microsoft.VisualStudio.Threading
                         this.childOrJoinedJobs = new WeakKeyDictionary<JoinableTask, int>(capacity: 3);
                     }
 
-                    int refCount;
-                    this.childOrJoinedJobs.TryGetValue(joinChild, out refCount);
+                    this.childOrJoinedJobs.TryGetValue(joinChild, out int refCount);
                     this.childOrJoinedJobs[joinChild] = ++refCount;
                     if (refCount == 1)
                     {

@@ -24,6 +24,10 @@ IThreadHandling`.
   using Task = System.Threading.Tasks.Task;
   ```
 
+### Installing the analyzers
+
+It is highly recommended that you install the [Microsoft.VisualStudio.Threading.Analyzers][AnalyzerNuPkg] NuGet package which adds analyzers to your project to help catch many common violations of [the threading rules](threading_rules.md), helping you prevent your code from deadlocking.
+
 ## How to switch to a background thread
 
 ```csharp
@@ -286,7 +290,13 @@ As of Visual Studio 2015 (Dev14) you can define async VS packages, allowing bina
 ## How do I make sure my async work has finished before my VS Package closes?
 This is a very important topic because we know VS can crash on shutdown because async tasks or background threads still actively running after all VS packages have supposedly shutdown.
 The recommended pattern to solve this problem is to derive from `AsyncPackage` instead of `Package`.
+Then for any async work your package is responsible for starting but that isn't awaited on somewhere,
+you should start that work with your `AsyncPackage`'s `JoinableTaskFactory` property, calling the `RunAsync` method.
+This ensures that on package close, your async work must complete before the AppDomain is shutdown.
+Your async work should generally also honor the `AsyncPackage.DisposalToken` and cancel itself right away when that
+token is signaled so that VS shutdown is not slowed down significantly by work that no longer matters.
 
 [NuPkg]: https://www.nuget.org/packages/Microsoft.VisualStudio.Threading
+[AnalyzerNuPkg]: https://www.nuget.org/packages/Microsoft.VisualStudio.Threading.Analyzers
 [MSDNIVsTaskGetAwaiter]: https://msdn.microsoft.com/en-us/library/vstudio/hh598836.aspx
 [AsyncPackage101]: https://microsoft.sharepoint.com/teams/DD_VSIDE/_layouts/15/WopiFrame.aspx?sourcedoc=%7b84C6ABED-E111-4B5D-B2D6-8B6FAF37F0D4%7d&file=Async%20Package%20101.docx&action=default

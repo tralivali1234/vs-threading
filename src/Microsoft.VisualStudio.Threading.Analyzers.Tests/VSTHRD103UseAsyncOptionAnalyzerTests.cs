@@ -922,5 +922,162 @@ static class FruitUtils {
             this.VerifyCSharpDiagnostic(test, this.expect);
             this.VerifyCSharpFix(test, withFix);
         }
+
+        [Fact]
+        public void AsyncAlternative_CodeFixRespectsTrivia()
+        {
+            var test = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    void Foo() { }
+    Task FooAsync() => Task.CompletedTask;
+
+    async Task DoWorkAsync()
+    {
+        await Task.Yield();
+        Console.WriteLine(""Foo"");
+
+        // Some comment
+        Foo(/*argcomment*/); // another comment
+    }
+}
+";
+            var withFix = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    void Foo() { }
+    Task FooAsync() => Task.CompletedTask;
+
+    async Task DoWorkAsync()
+    {
+        await Task.Yield();
+        Console.WriteLine(""Foo"");
+
+        // Some comment
+        await FooAsync(/*argcomment*/); // another comment
+    }
+}
+";
+            this.expect.Locations = new[] { new DiagnosticResultLocation("Test0.cs", 15, 9, 15, 12) };
+            this.VerifyCSharpDiagnostic(test, this.expect);
+            this.VerifyCSharpFix(test, withFix);
+        }
+
+        [Fact]
+        public void AwaitRatherThanWait_CodeFixRespectsTrivia()
+        {
+            var test = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    void Foo() { }
+    Task FooAsync() => Task.CompletedTask;
+
+    async Task DoWorkAsync()
+    {
+        await Task.Yield();
+        Console.WriteLine(""Foo"");
+
+        // Some comment
+        FooAsync(/*argcomment*/).Wait(); // another comment
+    }
+}
+";
+            var withFix = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    void Foo() { }
+    Task FooAsync() => Task.CompletedTask;
+
+    async Task DoWorkAsync()
+    {
+        await Task.Yield();
+        Console.WriteLine(""Foo"");
+
+        // Some comment
+        await FooAsync(/*argcomment*/); // another comment
+    }
+}
+";
+            this.expect.Locations = new[] { new DiagnosticResultLocation("Test0.cs", 15, 34, 15, 38) };
+            this.VerifyCSharpDiagnostic(test, this.expect);
+            this.VerifyCSharpFix(test, withFix);
+        }
+
+        [Fact]
+        public void XunitThrowAsyncNotSuggestedInAsyncTestMethod()
+        {
+            var test = @"
+using System;
+using System.Threading.Tasks;
+using Microsoft.VisualStudio.Threading;
+
+class Test {
+    Task T() {
+        Throws<Exception>(() => { });
+        return Task.FromResult(1);
+    }
+
+    void Throws<T>(Action action) { }
+    Task ThrowsAsync<T>(Func<Task> action) { return TplExtensions.CompletedTask; }
+}
+";
+
+            this.VerifyCSharpDiagnostic(test);
+        }
+
+        [Fact]
+        public void DoNotSuggestAsyncAlternativeWhenItIsSelf()
+        {
+            var test = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    public async Task CallMainAsync()
+    {
+        // do stuff
+        CallMain();
+        // do stuff
+    }
+
+    public void CallMain()
+    {
+        // more stuff
+    }
+}
+";
+
+            this.VerifyCSharpDiagnostic(test);
+        }
+
+        [Fact]
+        public void DoNotSuggestAsyncAlternativeWhenItReturnsVoid()
+        {
+            var test = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    void LogInformation() { }
+    void LogInformationAsync() { }
+
+    Task MethodAsync()
+    {
+        LogInformation();
+        return Task.CompletedTask;
+    }
+}
+";
+
+            this.VerifyCSharpDiagnostic(test);
+        }
     }
 }

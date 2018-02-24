@@ -323,30 +323,35 @@
         public void InitialCapacityZero()
         {
             var sem = new AsyncSemaphore(0);
+            Assert.Equal(0, sem.CurrentCount);
             Assert.False(sem.EnterAsync().IsCompleted);
+            Assert.Equal(0, sem.CurrentCount);
         }
 
         [Fact]
-        public void NoLeakForAllCanceledRequests()
+        [Trait("GC", "true")]
+        public async Task NoLeakForAllCanceledRequests()
         {
             var sem = new AsyncSemaphore(0);
-            this.CheckGCPressure(
-                () =>
+            await this.CheckGCPressureAsync(
+                async delegate
                 {
                     var cts = new CancellationTokenSource();
-                    sem.EnterAsync(cts.Token);
+                    var enterTask = sem.EnterAsync(cts.Token);
                     cts.Cancel();
+                    await enterTask.NoThrowAwaitable();
                 },
-                maxBytesAllocated: 5000,
+                maxBytesAllocated: -1,
                 iterations: 5);
         }
 
         [Theory, MemberData(nameof(SemaphoreCapacitySizes))]
-        public void NoLeakForUncontestedRequests(int initialCapacity)
+        [Trait("GC", "true")]
+        public async Task NoLeakForUncontestedRequests(int initialCapacity)
         {
             var sem = new AsyncSemaphore(initialCapacity);
             var releasers = new AsyncSemaphore.Releaser[initialCapacity];
-            this.CheckGCPressure(
+            await this.CheckGCPressureAsync(
                 async delegate
                 {
                     for (int i = 0; i < releasers.Length; i++)
@@ -359,18 +364,19 @@
                         releasers[i].Dispose();
                     }
                 },
-                maxBytesAllocated: 163 * initialCapacity,
+                maxBytesAllocated: -1,
                 iterations: 5);
         }
 
         [Theory]
         [InlineData(1)]
         [InlineData(3)]
-        public void NoLeakForContestedRequests_ThatAreCanceled(int contestingNumbers)
+        [Trait("GC", "true")]
+        public async Task NoLeakForContestedRequests_ThatAreCanceled(int contestingNumbers)
         {
             var sem = new AsyncSemaphore(0);
             var releasers = new Task<AsyncSemaphore.Releaser>[contestingNumbers];
-            this.CheckGCPressure(
+            await this.CheckGCPressureAsync(
                 async delegate
                 {
                     var cts = new CancellationTokenSource();
@@ -382,18 +388,19 @@
                     cts.Cancel();
                     await Task.WhenAll(releasers).NoThrowAwaitable();
                 },
-                maxBytesAllocated: 5200 * contestingNumbers,
+                maxBytesAllocated: -1,
                 iterations: 5);
         }
 
         [Theory]
         [InlineData(1)]
         [InlineData(3)]
-        public void NoLeakForContestedRequests_ThatAreEventuallyAdmitted(int contestingNumbers)
+        [Trait("GC", "true")]
+        public async Task NoLeakForContestedRequests_ThatAreEventuallyAdmitted(int contestingNumbers)
         {
             var sem = new AsyncSemaphore(1);
             var releasers = new Task<AsyncSemaphore.Releaser>[contestingNumbers];
-            this.CheckGCPressure(
+            await this.CheckGCPressureAsync(
                 async delegate
                 {
                     var blockingReleaser = await sem.EnterAsync();
@@ -411,11 +418,12 @@
                         (await releasers[i]).Dispose();
                     }
                 },
-                maxBytesAllocated: 3300 * contestingNumbers,
+                maxBytesAllocated: -1,
                 iterations: 5);
         }
 
         [Fact]
+        [Trait("Stress", "true")]
         public async Task Stress()
         {
             int cycles = 0;

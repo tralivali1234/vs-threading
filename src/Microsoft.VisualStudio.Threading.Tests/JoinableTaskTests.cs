@@ -509,7 +509,6 @@
         }
 
         [StaFact]
-        [Trait("TestCategory", "FailsInCloudTest")] // see https://github.com/Microsoft/vs-threading/issues/44
         public void TransitionToMainThreadRaisedWhenSwitchingToMainThread()
         {
             var factory = (DerivedJoinableTaskFactory)this.asyncPump;
@@ -522,11 +521,13 @@
                 Assert.Equal(0, factory.TransitionedToMainThreadHitCount); //, "No transition expected since we're already on the main thread.");
 
                 // While on the main thread, await something that executes on a background thread.
-                await Task.Run(delegate
+                var task = Task.Run(delegate
                 {
                     Assert.Equal(0, factory.TransitioningToMainThreadHitCount); //, "No transition expected when moving off the main thread.");
                     Assert.Equal(0, factory.TransitionedToMainThreadHitCount); //, "No transition expected when moving off the main thread.");
                 });
+                await task.GetAwaiter().YieldAndNotify(); // ensure we yield for this task.
+                await task; // rethrow any exceptions.
                 Assert.Equal(1, factory.TransitioningToMainThreadHitCount); //, "Reacquisition of main thread should have raised transition events.");
                 Assert.Equal(1, factory.TransitionedToMainThreadHitCount); //, "Reacquisition of main thread should have raised transition events.");
 
@@ -2519,7 +2520,7 @@
                 await inner;
             });
 
-            outerFactory.DoModalLoopTillEmpty();
+            outerFactory.DoModalLoopTillEmptyAndTaskCompleted(outer.Task, this.TimeoutToken);
             Skip.IfNot(outer.IsCompleted, "this is a product defect, but this test assumes this works to test something else.");
 
             // Allow the dispatcher to drain all messages that may be holding references.
@@ -2651,6 +2652,51 @@
             this.PushFrame();
         }
 
+        [StaFact]
+        public void StressFireAndForgetWorkFromCapturedSynchronizationContext()
+        {
+            for (int count = 0; count < 5000; count++)
+            {
+                var postDelegateInvoked = new ManualResetEventSlim();
+                Task innerTask = null;
+                SynchronizationContext capturedContext = null;
+                bool posted = false;
+
+                // Do the scheduling off the simulated STA thread so we can conveniently block later.
+                Task.Run(delegate
+                {
+                    this.asyncPump.Run(delegate
+                    {
+                        capturedContext = SynchronizationContext.Current;
+                        innerTask = Task.Run(async delegate
+                        {
+                            await Task.Yield();
+
+                            capturedContext.Post(
+                                s =>
+                                {
+                                    postDelegateInvoked.Set();
+                                },
+                                null);
+                            posted = true;
+                        });
+                        return TplExtensions.CompletedTask;
+                    });
+                }).Wait();
+
+                try
+                {
+                    innerTask.GetAwaiter().GetResult();
+                    Assert.True(postDelegateInvoked.Wait(AsyncDelay), "Timed out waiting for posted delegate to execute. Posted: " + posted);
+                }
+                catch
+                {
+                    this.Logger.WriteLine("iteration {0}", count);
+                    throw;
+                }
+            }
+        }
+
         /// <summary>
         /// Verifies that in the scenario when the initializing thread doesn't have a sync context at all (vcupgrade.exe)
         /// that reasonable behavior still occurs.
@@ -2779,30 +2825,40 @@
             }
         }
 
-        [StaFact, Trait("Stress", "true"), Trait("TestCategory", "FailsInCloudTest"), Trait("FailsInLocalBatch", "true")]
+#if ISOLATED_TEST_SUPPORT
+        [StaFact, Trait("Stress", "true")]
+        [Trait("GC", "true")]
         public void SwitchToMainThreadMemoryLeak()
         {
-            this.CheckGCPressure(
-                async delegate
-                {
-                    await TaskScheduler.Default;
-                    await this.asyncPump.SwitchToMainThreadAsync(CancellationToken.None);
-                },
-                2615);
+            if (this.ExecuteInIsolation())
+            {
+                this.CheckGCPressure(
+                    async delegate
+                    {
+                        await TaskScheduler.Default;
+                        await this.asyncPump.SwitchToMainThreadAsync(CancellationToken.None);
+                    },
+                    3585);
+            }
         }
 
-        [StaFact, Trait("Stress", "true"), Trait("TestCategory", "FailsInCloudTest"), Trait("FailsInLocalBatch", "true")]
+        [StaFact, Trait("Stress", "true")]
+        [Trait("GC", "true")]
         public void SwitchToMainThreadMemoryLeakWithCancellationToken()
         {
-            CancellationTokenSource tokenSource = new CancellationTokenSource();
-            this.CheckGCPressure(
-                async delegate
-                {
-                    await TaskScheduler.Default;
-                    await this.asyncPump.SwitchToMainThreadAsync(tokenSource.Token);
-                },
-                2800);
+            if (this.ExecuteInIsolation())
+            {
+                CancellationTokenSource tokenSource = new CancellationTokenSource();
+                this.CheckGCPressure(
+                    async delegate
+                    {
+                        await TaskScheduler.Default;
+                        await this.asyncPump.SwitchToMainThreadAsync(tokenSource.Token);
+                    },
+                    3800);
+            }
         }
+#endif
 
         [StaFact]
         public void SwitchToMainThreadSucceedsWhenConstructedUnderMTAOperation()
@@ -2874,57 +2930,69 @@
             outerJoinable.Join();
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+#if ISOLATED_TEST_SUPPORT
+        [StaFact, Trait("GC", "true")]
         public void RunSynchronouslyTaskNoYieldGCPressure()
         {
-            this.CheckGCPressure(delegate
+            if (this.ExecuteInIsolation())
             {
-                this.asyncPump.Run(delegate
+                this.CheckGCPressure(delegate
                 {
-                    return TplExtensions.CompletedTask;
-                });
-            }, maxBytesAllocated: 573);
+                    this.asyncPump.Run(delegate
+                    {
+                        return TplExtensions.CompletedTask;
+                    });
+                }, maxBytesAllocated: 819);
+            }
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+        [StaFact, Trait("GC", "true")]
         public void RunSynchronouslyTaskOfTNoYieldGCPressure()
         {
             Task<object> completedTask = Task.FromResult<object>(null);
 
-            this.CheckGCPressure(delegate
+            if (this.ExecuteInIsolation())
             {
-                this.asyncPump.Run(delegate
+                this.CheckGCPressure(delegate
                 {
-                    return completedTask;
-                });
-            }, maxBytesAllocated: 572);
+                    this.asyncPump.Run(delegate
+                    {
+                        return completedTask;
+                    });
+                }, maxBytesAllocated: 819);
+            }
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest"), Trait("FailsInLocalBatch", "true")]
+        [StaFact, Trait("GC", "true")]
         public void RunSynchronouslyTaskWithYieldGCPressure()
         {
-            this.CheckGCPressure(delegate
+            if (this.ExecuteInIsolation())
             {
-                this.asyncPump.Run(async delegate
+                this.CheckGCPressure(delegate
                 {
-                    await Task.Yield();
-                });
-            }, maxBytesAllocated: 1800);
+                    this.asyncPump.Run(async delegate
+                    {
+                        await Task.Yield();
+                    });
+                }, maxBytesAllocated: 2457);
+            }
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest"), Trait("FailsInLocalBatch", "true")]
+        [StaFact, Trait("GC", "true")]
         public void RunSynchronouslyTaskOfTWithYieldGCPressure()
         {
-            Task<object> completedTask = Task.FromResult<object>(null);
-
-            this.CheckGCPressure(delegate
+            if (this.ExecuteInIsolation())
             {
-                this.asyncPump.Run(async delegate
+                this.CheckGCPressure(delegate
                 {
-                    await Task.Yield();
-                });
-            }, maxBytesAllocated: 1800);
+                    this.asyncPump.Run(async delegate
+                    {
+                        await Task.Yield();
+                    });
+                }, maxBytesAllocated: 2457);
+            }
         }
+#endif
 
         /// <summary>
         /// Verifies that when two AsyncPumps are stacked on the main thread by (unrelated) COM reentrancy
@@ -2999,13 +3067,16 @@
         }
 
         [StaFact]
-        [Trait("TestCategory", "FailsInCloudTest")] // see https://github.com/Microsoft/vs-threading/issues/46
         public void RunAsyncWithNonYieldingDelegateNestedInRunOverhead()
         {
             var waitCountingJTF = new WaitCountingJoinableTaskFactory(this.asyncPump.Context);
             waitCountingJTF.Run(async delegate
             {
                 await TaskScheduler.Default;
+
+                // Be sure the main thread sleeps at *least* once.
+                await waitCountingJTF.WaitedOnce.WaitAsync().WithCancellation(this.TimeoutToken);
+
                 for (int i = 0; i < 1000; i++)
                 {
                     // TIP: spinning gives the blocking thread longer to wake up, which
@@ -3023,13 +3094,16 @@
         }
 
         [StaFact]
-        [Trait("TestCategory", "FailsInCloudTest")] // see https://github.com/Microsoft/vs-threading/issues/45
         public void RunAsyncWithYieldingDelegateNestedInRunOverhead()
         {
             var waitCountingJTF = new WaitCountingJoinableTaskFactory(this.asyncPump.Context);
             waitCountingJTF.Run(async delegate
             {
                 await TaskScheduler.Default;
+
+                // Be sure the main thread sleeps at *least* once.
+                await waitCountingJTF.WaitedOnce.WaitAsync().WithCancellation(this.TimeoutToken);
+
                 for (int i = 0; i < 1000; i++)
                 {
                     // TIP: spinning gives the blocking thread longer to wake up, which
@@ -3088,8 +3162,7 @@
             result = null;
             GC.Collect();
 
-            object target;
-            weakResult.TryGetTarget(out target);
+            weakResult.TryGetTarget(out object target);
             Assert.Null(target); //, "The task's result should be collected unless the JoinableTask is leaked");
         }
 
@@ -3118,10 +3191,10 @@
                 // and then we will signal a test event to resume the main thread execution, to let the remaining parts
                 // in the async delegate go through.
                 var joinable = this.asyncPump.RunAsync(async () =>
-            {
-                await this.asyncPump.SwitchToMainThreadAsync(cts.Token);
-                return result;
-            });
+                {
+                    await this.asyncPump.SwitchToMainThreadAsync(cts.Token);
+                    return result;
+                });
 
                 // Resume the main thread after OnCompleted() finishes.
                 // This is to ensure the timing that GetResult() must be called after OnCompleted() is fully done.
@@ -3129,15 +3202,26 @@
                 await joinable;
             });
 
-            // Needs to give the dispatcher a chance to run the posted action in order to release
-            // the last reference to the JoinableTask.
-            this.PushFrameTillQueueIsEmpty();
-
-            result = null;
-            GC.Collect();
-
             object target;
-            weakResult.TryGetTarget(out target);
+            do
+            {
+                // Needs to give the dispatcher a chance to run the posted action in order to release
+                // the last reference to the JoinableTask.
+                this.PushFrameTillQueueIsEmpty();
+
+                result = null;
+                GC.Collect();
+
+                // Test for our success condition. If it fails, we'll loop around
+                // waiting for the continuation to be posted to the UI thread as long as we can.
+                if (!weakResult.TryGetTarget(out target))
+                {
+                    break;
+                }
+
+                target = null;
+            } while (!this.TimeoutToken.IsCancellationRequested);
+
             Assert.Null(target); // The task's result should be collected unless the JoinableTask is leaked
         }
 
@@ -3304,6 +3388,99 @@
             Assert.True(joinTask.Wait(AsyncDelay));
         }
 
+        [StaFact]
+        public void JoinShouldCompleteWithStarvedThreadPool()
+        {
+            using (TestUtilities.StarveThreadpool())
+            {
+                var jt = this.asyncPump.RunAsync(async delegate
+                {
+                    await Task.Yield();
+                });
+                jt.Join(this.TimeoutToken);
+            }
+        }
+
+        [StaFact]
+        public void JoinOfTShouldCompleteWithStarvedThreadPool()
+        {
+            using (TestUtilities.StarveThreadpool())
+            {
+                var jt = this.asyncPump.RunAsync(async delegate
+                {
+                    await Task.Yield();
+                    return 1;
+                });
+                int result = jt.Join(this.TimeoutToken);
+            }
+        }
+
+        [StaFact]
+        public void JoinAsyncShouldCompleteWithStarvedThreadPool()
+        {
+            using (TestUtilities.StarveThreadpool())
+            {
+                var jt = this.asyncPump.RunAsync(async delegate
+                {
+                    await Task.Yield();
+                });
+                this.asyncPump.Run(async delegate
+                {
+                    await jt.JoinAsync(this.TimeoutToken);
+                });
+            }
+        }
+
+        [StaFact]
+        public void JoinAsyncOfTShouldCompleteWithStarvedThreadPool()
+        {
+            using (TestUtilities.StarveThreadpool())
+            {
+                var jt = this.asyncPump.RunAsync(async delegate
+                {
+                    await Task.Yield();
+                    return 1;
+                });
+                this.asyncPump.Run(async delegate
+                {
+                    int result = await jt.JoinAsync(this.TimeoutToken);
+                });
+            }
+        }
+
+        /// <summary>
+        /// Verifies that JoinableTask.CompleteOnCurrentThread does not hang
+        /// when a JoinableTask's <see cref="Func{Task}"/> completes at about the same time as
+        /// someone else Posts a message to its mainThreadQueue.
+        /// </summary>
+        /// <remarks>
+        /// Repro for https://github.com/Microsoft/vs-threading/issues/173
+        /// With the SyncPoints in place (as defined in the commit that introduced this comment)
+        /// set a breakpoint on in SyncPoints.Step line 47 `if (current + 1 == step)` and then
+        /// Debug this unit test. Each time the breakpoint is hit, just F5 again. That reproduces
+        /// the race quite reliably.
+        /// </remarks>
+        [Fact]
+        public void CompleteOnCurrentThread_DoesNotDeadlockWhenThreadPoolWorkPostRacesWithCompletion()
+        {
+            SynchronizationContext.SetSynchronizationContext(null);
+            var ctxt = new JoinableTaskContext();
+            async Task WorkForAWhileAfterYield()
+            {
+                // Get onto another thread so that SynchronizationContext.Post is called from that other thread.
+                await Task.Run(async delegate
+                {
+                    await Task.Yield();
+                });
+            }
+
+            ctxt.Factory.Run(async delegate
+            {
+                WorkForAWhileAfterYield().Forget();
+                await Task.Yield();
+            });
+        }
+
         protected override JoinableTaskContext CreateJoinableTaskContext()
         {
             return new DerivedJoinableTaskContext();
@@ -3451,14 +3628,14 @@
             {
             }
 
-            internal int WaitCount
-            {
-                get { return this.waitCount; }
-            }
+            internal int WaitCount => Volatile.Read(ref this.waitCount);
+
+            internal AsyncManualResetEvent WaitedOnce { get; } = new AsyncManualResetEvent();
 
             protected override void WaitSynchronously(Task task)
             {
                 Interlocked.Increment(ref this.waitCount);
+                this.WaitedOnce.Set();
                 base.WaitSynchronously(task);
             }
         }
@@ -3533,10 +3710,7 @@
                     Assert.Equal(this.TransitionedToMainThreadHitCount + 1, this.TransitioningToMainThreadHitCount); //, "Imbalance of transition events.");
                 }
 
-                if (this.TransitioningToMainThreadCallback != null)
-                {
-                    this.TransitioningToMainThreadCallback(joinableTask);
-                }
+                this.TransitioningToMainThreadCallback?.Invoke(joinableTask);
             }
 
             protected override void OnTransitionedToMainThread(JoinableTask joinableTask, bool canceled)
@@ -3548,14 +3722,14 @@
 
                 if (canceled)
                 {
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
                     Assert.NotSame(this.Context.MainThread, Thread.CurrentThread); // A canceled transition should not complete on the main thread.
 #endif
                     Assert.False(this.Context.IsOnMainThread);
                 }
                 else
                 {
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
                     Assert.Same(this.Context.MainThread, Thread.CurrentThread); // We should be on the main thread if we've just transitioned.
 #endif
                     Assert.True(this.Context.IsOnMainThread);
@@ -3572,10 +3746,7 @@
                     Assert.Equal(this.TransitionedToMainThreadHitCount, this.TransitioningToMainThreadHitCount); //, "Imbalance of transition events.");
                 }
 
-                if (this.TransitionedToMainThreadCallback != null)
-                {
-                    this.TransitionedToMainThreadCallback(joinableTask);
-                }
+                this.TransitionedToMainThreadCallback?.Invoke(joinableTask);
             }
 
             protected override void WaitSynchronously(Task task)
@@ -3590,10 +3761,7 @@
                 Assert.NotNull(callback);
                 Assert.True(SingleThreadedSynchronizationContext.IsSingleThreadedSyncContext(this.UnderlyingSynchronizationContext));
                 base.PostToUnderlyingSynchronizationContext(callback, state);
-                if (this.PostToUnderlyingSynchronizationContextCallback != null)
-                {
-                    this.PostToUnderlyingSynchronizationContextCallback();
-                }
+                this.PostToUnderlyingSynchronizationContextCallback?.Invoke();
             }
         }
 
@@ -3613,18 +3781,6 @@
             }
 
             /// <summary>
-            /// Executes all work posted to this factory.
-            /// </summary>
-            internal void DoModalLoopTillEmpty()
-            {
-                Tuple<SendOrPostCallback, object> work;
-                while (this.queuedMessages.TryDequeue(out work))
-                {
-                    work.Item1(work.Item2);
-                }
-            }
-
-            /// <summary>
             /// Executes all work posted to this factory, and waits for more work
             /// till the specified <paramref name="task"/> completes.
             /// </summary>
@@ -3640,8 +3796,7 @@
             {
                 do
                 {
-                    Tuple<SendOrPostCallback, object> work;
-                    while (this.queuedMessages.TryDequeue(out work))
+                    while (this.queuedMessages.TryDequeue(out Tuple<SendOrPostCallback, object> work))
                     {
                         work.Item1(work.Item2);
                         cancellationToken.ThrowIfCancellationRequested();

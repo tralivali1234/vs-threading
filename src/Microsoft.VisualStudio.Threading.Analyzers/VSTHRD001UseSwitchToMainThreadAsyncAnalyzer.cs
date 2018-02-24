@@ -20,6 +20,7 @@
             id: Id,
             title: Strings.VSTHRD001_Title,
             messageFormat: Strings.VSTHRD001_MessageFormat,
+            helpLinkUri: Utils.GetHelpLink(Id),
             category: "Usage",
             defaultSeverity: DiagnosticSeverity.Warning,
             isEnabledByDefault: true);
@@ -44,9 +45,7 @@
                 {
                     context.CancellationToken.ThrowIfCancellationRequested();
 
-                    if (invokeMethod.Name == legacyMethod.MethodName &&
-                        invokeMethod.ContainingType.Name == legacyMethod.ContainingTypeName &&
-                        invokeMethod.ContainingType.BelongsToNamespace(legacyMethod.ContainingTypeNamespace))
+                    if (legacyMethod.IsMatch(invokeMethod))
                     {
                         var diagnostic = Diagnostic.Create(
                             Descriptor,

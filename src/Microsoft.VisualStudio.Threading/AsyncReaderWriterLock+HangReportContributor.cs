@@ -75,8 +75,7 @@ namespace Microsoft.VisualStudio.Threading
                 try
                 {
                     Monitor.TryEnter(this.syncObject, 1000, ref lockAcquired);
-                    XElement nodes, links;
-                    var dgml = CreateDgml(out nodes, out links);
+                    var dgml = CreateDgml(out XElement nodes, out XElement links);
 
                     if (!lockAcquired)
                     {
@@ -147,7 +146,7 @@ namespace Microsoft.VisualStudio.Threading
             }
 
             Delegate lockWaitingContinuation;
-#if NET45
+#if DESKTOP || NETSTANDARD2_0
             if (awaiter.RequestingStackTrace != null)
             {
                 label.AppendLine(awaiter.RequestingStackTrace.ToString());

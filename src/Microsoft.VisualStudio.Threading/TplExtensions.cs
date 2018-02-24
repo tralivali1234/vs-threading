@@ -52,7 +52,7 @@ namespace Microsoft.VisualStudio.Threading
             if (!task.IsCompleted)
             {
                 // Waiting on a continuation of a task won't ever inline the predecessor (in .NET 4.x anyway).
-                var continuation = task.ContinueWith(t => { }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                var continuation = task.ContinueWith(t => { }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
                 continuation.Wait();
             }
 
@@ -116,23 +116,7 @@ namespace Microsoft.VisualStudio.Threading
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1704:IdentifiersShouldBeSpelledCorrectly", MessageId = "tcs")]
         public static void ApplyResultTo<T>(this Task<T> task, TaskCompletionSource<T> tcs)
         {
-            Requires.NotNull(task, nameof(task));
-            Requires.NotNull(tcs, nameof(tcs));
-
-            if (task.IsCompleted)
-            {
-                ApplyCompletedTaskResultTo(task, tcs);
-            }
-            else
-            {
-                // Using a minimum of allocations (just one task, and no closure) ensure that one task's completion sets equivalent completion on another task.
-                task.ContinueWith(
-                    (t, s) => ApplyCompletedTaskResultTo(t, (TaskCompletionSource<T>)s),
-                    tcs,
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-            }
+            ApplyResultTo(task, tcs, inlineSubsequentCompletion: true);
         }
 
         /// <summary>
@@ -387,10 +371,7 @@ namespace Microsoft.VisualStudio.Threading
                 {
                     ApplyCompletedTaskResultTo(t, tcs);
 
-                    if (callback != null)
-                    {
-                        callback(tcs.Task);
-                    }
+                    callback?.Invoke(tcs.Task);
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.None,
@@ -432,10 +413,7 @@ namespace Microsoft.VisualStudio.Threading
                 {
                     ApplyCompletedTaskResultTo(t, tcs, null);
 
-                    if (callback != null)
-                    {
-                        callback(tcs.Task);
-                    }
+                    callback?.Invoke(tcs.Task);
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.None,
@@ -443,6 +421,137 @@ namespace Microsoft.VisualStudio.Threading
 
             return tcs.Task;
         }
+
+#if DESKTOP || NETSTANDARD2_0
+
+        /// <summary>
+        /// Creates a TPL Task that returns <c>true</c> when a <see cref="WaitHandle"/> is signaled or returns <c>false</c> if a timeout occurs first.
+        /// </summary>
+        /// <param name="handle">The handle whose signal triggers the task to be completed.  Do not use a <see cref="Mutex"/> here.</param>
+        /// <param name="timeout">The timeout (in milliseconds) after which the task will return <c>false</c> if the handle is not signaled by that time.</param>
+        /// <param name="cancellationToken">A token whose cancellation will cause the returned Task to immediately complete in a canceled state.</param>
+        /// <returns>
+        /// A Task that completes when the handle is signaled or times out, or when the caller's cancellation token is canceled.
+        /// If the task completes because the handle is signaled, the task's result is <c>true</c>.
+        /// If the task completes because the handle is not signaled prior to the timeout, the task's result is <c>false</c>.
+        /// </returns>
+        /// <remarks>
+        /// The completion of the returned task is asynchronous with respect to the code that actually signals the wait handle.
+        /// </remarks>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Reliability", "CA2001:AvoidCallingProblematicMethods", MessageId = "System.Runtime.InteropServices.SafeHandle.DangerousGetHandle")]
+        public static Task<bool> ToTask(this WaitHandle handle, int timeout = Timeout.Infinite, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            Requires.NotNull(handle, nameof(handle));
+
+            // Check whether the handle is already signaled as an optimization.
+            // But even for WaitOne(0) the CLR can pump messages if called on the UI thread, which the caller may not
+            // be expecting at this time, so be sure there is no message pump active by controlling the SynchronizationContext.
+            using (NoMessagePumpSyncContext.Default.Apply())
+            {
+                if (handle.WaitOne(0))
+                {
+                    return TrueTask;
+                }
+                else if (timeout == 0)
+                {
+                    return FalseTask;
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var tcs = new TaskCompletionSource<bool>();
+
+            // Arrange that if the caller signals their cancellation token that we complete the task
+            // we return immediately. Because of the continuation we've scheduled on that task, this
+            // will automatically release the wait handle notification as well.
+            CancellationTokenRegistration cancellationRegistration =
+                cancellationToken.Register(
+                    state =>
+                    {
+                        var tuple = (Tuple<TaskCompletionSource<bool>, CancellationToken>)state;
+                        tuple.Item1.TrySetCanceled(tuple.Item2);
+                    },
+                    Tuple.Create(tcs, cancellationToken));
+
+            RegisteredWaitHandle callbackHandle = ThreadPool.RegisterWaitForSingleObject(
+                handle,
+                (state, timedOut) => ((TaskCompletionSource<bool>)state).TrySetResult(!timedOut),
+                state: tcs,
+                millisecondsTimeOutInterval: timeout,
+                executeOnlyOnce: true);
+
+            // It's important that we guarantee that when the returned task completes (whether cancelled, timed out, or signaled)
+            // that we release all resources.
+            if (cancellationToken.CanBeCanceled)
+            {
+                // We have a cancellation token registration and a wait handle registration to release.
+                // Use a tuple as a state object to avoid allocating delegates and closures each time this method is called.
+                tcs.Task.ContinueWith(
+                    (_, state) =>
+                    {
+                        var tuple = (Tuple<RegisteredWaitHandle, CancellationTokenRegistration>)state;
+                        tuple.Item1.Unregister(null); // release resources for the async callback
+                        tuple.Item2.Dispose(); // release memory for cancellation token registration
+                    },
+                    Tuple.Create<RegisteredWaitHandle, CancellationTokenRegistration>(callbackHandle, cancellationRegistration),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
+            else
+            {
+                // Since the cancellation token was the default one, the only thing we need to track is clearing the RegisteredWaitHandle,
+                // so do this such that we allocate as few objects as possible.
+                tcs.Task.ContinueWith(
+                    (_, state) => ((RegisteredWaitHandle)state).Unregister(null),
+                    callbackHandle,
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
+
+            return tcs.Task;
+        }
+
+#endif
+
+        /// <summary>
+        /// Applies one task's results to another.
+        /// </summary>
+        /// <typeparam name="T">The type of value returned by a task.</typeparam>
+        /// <param name="task">The task whose completion should be applied to another.</param>
+        /// <param name="tcs">The task that should receive the completion status.</param>
+        /// <param name="inlineSubsequentCompletion">
+        /// <c>true</c> to complete the supplied <paramref name="tcs"/> as efficiently as possible (inline with the completion of <paramref name="task"/>);
+        /// <c>false</c> to complete the <paramref name="tcs"/> asynchronously.
+        /// Note if <paramref name="task"/> is completed when this method is invoked, then <paramref name="tcs"/> is always completed synchronously.
+        /// </param>
+        internal static void ApplyResultTo<T>(this Task<T> task, TaskCompletionSource<T> tcs, bool inlineSubsequentCompletion)
+        {
+            Requires.NotNull(task, nameof(task));
+            Requires.NotNull(tcs, nameof(tcs));
+
+            if (task.IsCompleted)
+            {
+                ApplyCompletedTaskResultTo(task, tcs);
+            }
+            else
+            {
+                // Using a minimum of allocations (just one task, and no closure) ensure that one task's completion sets equivalent completion on another task.
+                task.ContinueWith(
+                    (t, s) => ApplyCompletedTaskResultTo(t, (TaskCompletionSource<T>)s),
+                    tcs,
+                    CancellationToken.None,
+                    inlineSubsequentCompletion ? TaskContinuationOptions.ExecuteSynchronously : TaskContinuationOptions.None,
+                    TaskScheduler.Default);
+            }
+        }
+
+        /// <summary>
+        /// Returns a reusable task that is already canceled.
+        /// </summary>
+        /// <typeparam name="T">The type parameter for the returned task.</typeparam>
+        internal static Task<T> CanceledTaskOfT<T>() => CanceledTaskOfTCache<T>.CanceledTask;
 
         /// <summary>
         /// Applies a completed task's results to another.
@@ -713,6 +822,19 @@ namespace Microsoft.VisualStudio.Threading
             /// Gets or sets the state passed into the constructor.
             /// </summary>
             internal TState SourceState { get; set; }
+        }
+
+        /// <summary>
+        /// A cache for canceled <see cref="Task{T}"/> instances.
+        /// </summary>
+        /// <typeparam name="T">The type parameter for the returned task.</typeparam>
+        private static class CanceledTaskOfTCache<T>
+        {
+            /// <summary>
+            /// A task that is already canceled.
+            /// </summary>
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2104:DoNotDeclareReadOnlyMutableReferenceTypes")]
+            internal static readonly Task<T> CanceledTask = ThreadingTools.TaskFromCanceled<T>(new CancellationToken(canceled: true));
         }
     }
 }

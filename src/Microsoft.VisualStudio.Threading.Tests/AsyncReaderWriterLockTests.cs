@@ -23,7 +23,7 @@
         private const char WriteChar = 'W';
 
         private const int GCAllocationAttempts = 3;
-        private const int MaxGarbagePerLock = 300;
+        private const int MaxGarbagePerLock = 500;
         private const int MaxGarbagePerYield = 1000;
 
         /// <summary>
@@ -38,7 +38,7 @@
         public AsyncReaderWriterLockTests(ITestOutputHelper logger)
             : base(logger)
         {
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
             this.asyncLock = new StaAverseLock();
 #else
             this.asyncLock = new AsyncReaderWriterLock();
@@ -228,11 +228,10 @@
             await continuation;
         }
 
-        [StaFact]
+        [SkippableFact]
         public async Task NoMemoryLeakForManyLocks()
         {
-            // Get on an MTA thread so that locks do not necessarily yield.
-            await Task.Run(async delegate
+            if (await this.ExecuteInIsolationAsync())
             {
                 // First prime the pump to allocate some fixed cost memory.
                 {
@@ -262,10 +261,10 @@
                 }
 
                 Assert.True(passingAttemptObserved);
-            });
+            }
         }
 
-#if NET452
+#if DESKTOP
         [StaFact, Trait("TestCategory", "FailsInCloudTest")]
         public async Task CallAcrossAppDomainBoundariesWithLock()
         {
@@ -846,20 +845,28 @@
             this.LockReleaseTestHelper(this.asyncLock.ReadLockAsync());
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+#if ISOLATED_TEST_SUPPORT
+        [StaFact, Trait("GC", "true")]
         public async Task UncontestedTopLevelReadLockAsyncGarbageCheck()
         {
-            var cts = new CancellationTokenSource();
-            await this.UncontestedTopLevelLocksAllocFreeHelperAsync(() => this.asyncLock.ReadLockAsync(cts.Token), false);
+            if (await this.ExecuteInIsolationAsync())
+            {
+                var cts = new CancellationTokenSource();
+                await this.UncontestedTopLevelLocksAllocFreeHelperAsync(() => this.asyncLock.ReadLockAsync(cts.Token), false);
+            }
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+        [StaFact, Trait("GC", "true")]
         public async Task NestedReadLockAsyncGarbageCheck()
         {
-            await this.NestedLocksAllocFreeHelperAsync(() => this.asyncLock.ReadLockAsync(), false);
+            if (await this.ExecuteInIsolationAsync())
+            {
+                await this.NestedLocksAllocFreeHelperAsync(() => this.asyncLock.ReadLockAsync(), false);
+            }
         }
+#endif
 
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
         [StaFact]
         public void LockAsyncThrowsOnGetResultBySta()
         {
@@ -1131,18 +1138,26 @@
             this.LockReleaseTestHelper(this.asyncLock.UpgradeableReadLockAsync());
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+#if ISOLATED_TEST_SUPPORT
+        [StaFact, Trait("GC", "true")]
         public async Task UncontestedTopLevelUpgradeableReadLockAsyncGarbageCheck()
         {
-            var cts = new CancellationTokenSource();
-            await this.UncontestedTopLevelLocksAllocFreeHelperAsync(() => this.asyncLock.UpgradeableReadLockAsync(cts.Token), true);
+            if (await this.ExecuteInIsolationAsync())
+            {
+                var cts = new CancellationTokenSource();
+                await this.UncontestedTopLevelLocksAllocFreeHelperAsync(() => this.asyncLock.UpgradeableReadLockAsync(cts.Token), true);
+            }
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+        [StaFact, Trait("GC", "true")]
         public async Task NestedUpgradeableReadLockAsyncGarbageCheck()
         {
-            await this.NestedLocksAllocFreeHelperAsync(() => this.asyncLock.UpgradeableReadLockAsync(), true);
+            if (await this.ExecuteInIsolationAsync())
+            {
+                await this.NestedLocksAllocFreeHelperAsync(() => this.asyncLock.UpgradeableReadLockAsync(), true);
+            }
         }
+#endif
 
         [StaFact]
         public async Task ExclusiveLockReleasedEventsFireOnlyWhenWriteLockReleased()
@@ -1345,7 +1360,7 @@
             });
         }
 
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
         /// <summary>
         /// Tests that a common way to accidentally fork an exclusive lock for
         /// concurrent access gets called out as an error.
@@ -1653,18 +1668,26 @@
                 }));
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+#if ISOLATED_TEST_SUPPORT
+        [StaFact, Trait("GC", "true")]
         public async Task UncontestedTopLevelWriteLockAsyncGarbageCheck()
         {
-            var cts = new CancellationTokenSource();
-            await this.UncontestedTopLevelLocksAllocFreeHelperAsync(() => this.asyncLock.WriteLockAsync(cts.Token), true);
+            if (await this.ExecuteInIsolationAsync())
+            {
+                var cts = new CancellationTokenSource();
+                await this.UncontestedTopLevelLocksAllocFreeHelperAsync(() => this.asyncLock.WriteLockAsync(cts.Token), true);
+            }
         }
 
-        [StaFact, Trait("GC", "true"), Trait("TestCategory", "FailsInCloudTest")]
+        [StaFact, Trait("GC", "true")]
         public async Task NestedWriteLockAsyncGarbageCheck()
         {
-            await this.NestedLocksAllocFreeHelperAsync(() => this.asyncLock.WriteLockAsync(), true);
+            if (await this.ExecuteInIsolationAsync())
+            {
+                await this.NestedLocksAllocFreeHelperAsync(() => this.asyncLock.WriteLockAsync(), true);
+            }
         }
+#endif
 
         [StaFact]
         public async Task MitigationAgainstAccidentalWriteLockConcurrency()
@@ -1696,7 +1719,7 @@
             }).GetAwaiter().GetResult();
         }
 
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
         /// <summary>
         /// Tests that a common way to accidentally fork an exclusive lock for
         /// concurrent access gets called out as an error.
@@ -2486,11 +2509,90 @@
             Assert.False(this.asyncLock.IsWriteLockHeld);
         }
 
+        [StaFact]
+        public async Task CancelJustBeforeIsCompletedNoLeak()
+        {
+            var lockAwaitFinished = new TaskCompletionSource<object>();
+            var cts = new CancellationTokenSource();
+
+            var awaitable = this.asyncLock.UpgradeableReadLockAsync(cts.Token);
+            var awaiter = awaitable.GetAwaiter();
+            cts.Cancel();
+
+            if (awaiter.IsCompleted)
+            {
+                // The lock should not be issued on an STA thread
+                Assert.ThrowsAny<OperationCanceledException>(() => awaiter.GetResult().Dispose());
+                await lockAwaitFinished.SetAsync();
+            }
+            else
+            {
+                awaiter.OnCompleted(delegate
+                {
+                    try
+                    {
+                        awaiter.GetResult().Dispose();
+#if DESKTOP || NETCOREAPP2_0
+
+                        Assert.Equal(ApartmentState.MTA, Thread.CurrentThread.GetApartmentState());
+#endif
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+
+                    lockAwaitFinished.SetAsync();
+                });
+            }
+
+            await lockAwaitFinished.Task.WithTimeout(UnexpectedTimeout);
+
+            // No lock is leaked
+            using (await this.asyncLock.UpgradeableReadLockAsync())
+            {
+#if DESKTOP || NETCOREAPP2_0
+                Assert.Equal(ApartmentState.MTA, Thread.CurrentThread.GetApartmentState());
+#endif
+            }
+        }
+
+        [StaFact]
+        public async Task CancelJustAfterIsCompleted()
+        {
+            var lockAwaitFinished = new TaskCompletionSource<object>();
+            var testCompleted = new TaskCompletionSource<object>();
+            var readlockTask = Task.Run(async delegate
+            {
+                using (await this.asyncLock.ReadLockAsync())
+                {
+                    await lockAwaitFinished.SetAsync();
+                    await testCompleted.Task;
+                }
+            });
+
+            await lockAwaitFinished.Task;
+
+            var cts = new CancellationTokenSource();
+
+            var awaitable = this.asyncLock.WriteLockAsync(cts.Token);
+            var awaiter = awaitable.GetAwaiter();
+            Assert.False(awaiter.IsCompleted, "The lock should not be issued until read lock is released.");
+
+            cts.Cancel();
+            awaiter.OnCompleted(delegate
+            {
+                Assert.ThrowsAny<OperationCanceledException>(() => awaiter.GetResult().Dispose());
+                testCompleted.SetAsync();
+            });
+
+            await readlockTask.WithTimeout(UnexpectedTimeout);
+        }
+
 #endregion
 
 #region Completion tests
 
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
         [StaFact]
         public void CompleteBlocksNewTopLevelLocksSTA()
         {
@@ -3040,10 +3142,12 @@
         [StaFact]
         public async Task OnBeforeWriteLockReleasedWithStickyUpgradedWriteWithNestedLocks()
         {
-            var asyncLock = new LockDerived();
-            asyncLock.OnExclusiveLockReleasedAsyncDelegate = async delegate
+            var asyncLock = new LockDerived
             {
-                await Task.Yield();
+                OnExclusiveLockReleasedAsyncDelegate = async delegate
+                {
+                    await Task.Yield();
+                }
             };
             var releaseCallback = new TaskCompletionSource<object>();
             using (await asyncLock.UpgradeableReadLockAsync(AsyncReaderWriterLock.LockFlags.StickyWrite))
@@ -3168,7 +3272,7 @@
                 }));
         }
 
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
         [StaFact]
         public void OnBeforeWriteLockReleasedCallbackNeverInvokedOnSTA()
         {
@@ -3299,7 +3403,7 @@
 #endregion
 
 #region Thread apartment rules
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
 
         /// <summary>Verifies that locks requested on STA threads will marshal to an MTA.</summary>
         [StaFact]
@@ -3894,7 +3998,7 @@
                         {
                             try
                             {
-#if NET452
+#if DESKTOP || NETCOREAPP2_0
                                 Assert.Equal(ApartmentState.MTA, Thread.CurrentThread.GetApartmentState());
 #endif
                                 secondLockObtained.SetAsync();
@@ -4470,7 +4574,7 @@
             }
         }
 
-#if NET452
+#if DESKTOP
         private class OtherDomainProxy : MarshalByRefObject
         {
             internal void SomeMethod(int callingAppDomainId)
@@ -4478,7 +4582,9 @@
                 AssertEx.NotEqual(callingAppDomainId, AppDomain.CurrentDomain.Id, "AppDomain boundaries not crossed.");
             }
         }
+#endif
 
+#if DESKTOP || NETCOREAPP2_0
         private class StaAverseLock : AsyncReaderWriterLock
         {
             protected override bool CanCurrentThreadHoldActiveLock
@@ -4538,10 +4644,7 @@
             {
                 base.OnUpgradeableReadLockReleased();
 
-                if (this.OnUpgradeableReadLockReleasedDelegate != null)
-                {
-                    this.OnUpgradeableReadLockReleasedDelegate();
-                }
+                this.OnUpgradeableReadLockReleasedDelegate?.Invoke();
             }
 
             protected override async Task OnBeforeExclusiveLockReleasedAsync()
