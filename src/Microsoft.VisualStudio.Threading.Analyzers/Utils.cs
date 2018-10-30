@@ -4,15 +4,14 @@
 *                                                        *
 *********************************************************/
 
-// https://github.com/DotNetAnalyzers/StyleCopAnalyzers/issues/2267
-#pragma warning disable SA1009 // Closing parenthesis must be spaced correctly
-
 namespace Microsoft.VisualStudio.Threading.Analyzers
 {
     using System;
     using System.Collections.Generic;
     using System.Collections.Immutable;
     using System.Linq;
+    using System.Reflection;
+    using System.Text;
     using System.Threading;
     using System.Threading.Tasks;
     using CodeAnalysis.CSharp;
@@ -34,6 +33,10 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
                 {
                     handler(ctxt);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception ex) when (LaunchDebuggerExceptionFilter())
                 {
                     throw new Exception($"Analyzer failure while processing syntax at {ctxt.Node.SyntaxTree.FilePath}({ctxt.Node.GetLocation()?.GetLineSpan().StartLinePosition.Line + 1},{ctxt.Node.GetLocation()?.GetLineSpan().StartLinePosition.Character + 1}): {ex.GetType()} {ex.Message}. Syntax: {ctxt.Node}", ex);
@@ -49,9 +52,32 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
                 {
                     handler(ctxt);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception ex) when (LaunchDebuggerExceptionFilter())
                 {
                     throw new Exception($"Analyzer failure while processing symbol {ctxt.Symbol} at {ctxt.Symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath}({ctxt.Symbol.Locations.FirstOrDefault()?.GetLineSpan().StartLinePosition.Line},{ctxt.Symbol.Locations.FirstOrDefault()?.GetLineSpan().StartLinePosition.Character}): {ex.GetType()} {ex.Message}", ex);
+                }
+            };
+        }
+
+        internal static Action<CodeBlockAnalysisContext> DebuggableWrapper(Action<CodeBlockAnalysisContext> handler)
+        {
+            return ctxt =>
+            {
+                try
+                {
+                    handler(ctxt);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex) when (LaunchDebuggerExceptionFilter())
+                {
+                    throw new Exception($"Analyzer failure while processing syntax at {ctxt.CodeBlock.SyntaxTree.FilePath}({ctxt.CodeBlock.GetLocation()?.GetLineSpan().StartLinePosition.Line + 1},{ctxt.CodeBlock.GetLocation()?.GetLineSpan().StartLinePosition.Character + 1}): {ex.GetType()} {ex.Message}. Syntax: {ctxt.CodeBlock}", ex);
                 }
             };
         }
@@ -161,10 +187,64 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             return currentNamespace?.IsGlobalNamespace ?? false;
         }
 
-        internal static bool HasAsyncCompatibleReturnType(this IMethodSymbol methodSymbol)
+        /// <summary>
+        /// Finds the local function, anonymous function, method, accessor, or ctor that most directly owns a given syntax node.
+        /// </summary>
+        /// <param name="syntaxNode">The syntax node to begin the search from.</param>
+        /// <returns>The containing function, and metadata for it.</returns>
+        internal static ContainingFunctionData GetContainingFunction(CSharpSyntaxNode syntaxNode)
         {
-            return methodSymbol?.ReturnType?.Name == nameof(Task) && methodSymbol.ReturnType.BelongsToNamespace(Namespaces.SystemThreadingTasks);
+            while (syntaxNode != null)
+            {
+                if (syntaxNode is SimpleLambdaExpressionSyntax simpleLambda)
+                {
+                    return new ContainingFunctionData(simpleLambda, simpleLambda.AsyncKeyword != default(SyntaxToken), SyntaxFactory.ParameterList().AddParameters(simpleLambda.Parameter), simpleLambda.Body);
+                }
+
+                if (syntaxNode is AnonymousMethodExpressionSyntax anonymousMethod)
+                {
+                    return new ContainingFunctionData(anonymousMethod, anonymousMethod.AsyncKeyword != default(SyntaxToken), anonymousMethod.ParameterList, anonymousMethod.Body);
+                }
+
+                if (syntaxNode is ParenthesizedLambdaExpressionSyntax lambda)
+                {
+                    return new ContainingFunctionData(lambda, lambda.AsyncKeyword != default(SyntaxToken), lambda.ParameterList, lambda.Body);
+                }
+
+                if (syntaxNode is AccessorDeclarationSyntax accessor)
+                {
+                    return new ContainingFunctionData(accessor, false, SyntaxFactory.ParameterList(), accessor.Body);
+                }
+
+                if (syntaxNode is BaseMethodDeclarationSyntax method)
+                {
+                    return new ContainingFunctionData(method, method.Modifiers.Any(SyntaxKind.AsyncKeyword), method.ParameterList, method.Body);
+                }
+
+                syntaxNode = (CSharpSyntaxNode)syntaxNode.Parent;
+            }
+
+            return default(ContainingFunctionData);
         }
+
+        internal static bool HasAsyncCompatibleReturnType(this IMethodSymbol methodSymbol) => IsAsyncCompatibleReturnType(methodSymbol?.ReturnType);
+
+        internal static bool IsAsyncCompatibleReturnType(this ITypeSymbol typeSymbol)
+        {
+            // We could be more aggressive here and allow other types that implement the async method builder pattern.
+            return IsTask(typeSymbol);
+        }
+
+        internal static bool IsTask(ITypeSymbol typeSymbol) => typeSymbol?.Name == nameof(Task) && typeSymbol.BelongsToNamespace(Namespaces.SystemThreadingTasks);
+
+        /// <summary>
+        /// Gets a value indicating whether a method is async or is ready to be async by having an async-compatible return type.
+        /// </summary>
+        /// <remarks>
+        /// A method might be async but not have an async compatible return type if it returns void and is an "async void" method.
+        /// However, a non-async void method is *not* considered async ready and gets a false value returned from this method.
+        /// </remarks>
+        internal static bool IsAsyncReady(this IMethodSymbol methodSymbol) => methodSymbol.IsAsync || methodSymbol.HasAsyncCompatibleReturnType();
 
         internal static bool HasAsyncAlternative(this IMethodSymbol methodSymbol, CancellationToken cancellationToken)
         {
@@ -292,6 +372,38 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             return false;
         }
 
+        internal static bool IsAssignedWithin(SyntaxNode container, SemanticModel semanticModel, ISymbol variable, CancellationToken cancellationToken)
+        {
+            if (semanticModel == null)
+            {
+                throw new ArgumentNullException(nameof(semanticModel));
+            }
+
+            if (variable == null)
+            {
+                throw new ArgumentNullException(nameof(variable));
+            }
+
+            if (container == null)
+            {
+                return false;
+            }
+
+            foreach (var node in container.DescendantNodesAndSelf(n => !(n is AnonymousFunctionExpressionSyntax)))
+            {
+                if (node is AssignmentExpressionSyntax assignment)
+                {
+                    var assignedSymbol = semanticModel.GetSymbolInfo(assignment.Left, cancellationToken).Symbol;
+                    if (variable.Equals(assignedSymbol))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         internal static IEnumerable<ITypeSymbol> FindInterfacesImplemented(this ISymbol symbol)
         {
             if (symbol == null)
@@ -327,7 +439,7 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             {
                 updated = simpleLambda
                     .WithAsyncKeyword(SyntaxFactory.Token(SyntaxKind.AsyncKeyword))
-                    .WithBody(UpdateStatementsForAsyncMethod(simpleLambda.Body, semanticModel, hasReturnValue));
+                    .WithBody(UpdateStatementsForAsyncMethod(simpleLambda.Body, semanticModel, hasReturnValue, cancellationToken));
             }
 
             var parentheticalLambda = method as ParenthesizedLambdaExpressionSyntax;
@@ -335,7 +447,7 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             {
                 updated = parentheticalLambda
                     .WithAsyncKeyword(SyntaxFactory.Token(SyntaxKind.AsyncKeyword))
-                    .WithBody(UpdateStatementsForAsyncMethod(parentheticalLambda.Body, semanticModel, hasReturnValue));
+                    .WithBody(UpdateStatementsForAsyncMethod(parentheticalLambda.Body, semanticModel, hasReturnValue, cancellationToken));
             }
 
             var anonymousMethod = method as AnonymousMethodExpressionSyntax;
@@ -343,7 +455,7 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             {
                 updated = anonymousMethod
                     .WithAsyncKeyword(SyntaxFactory.Token(SyntaxKind.AsyncKeyword))
-                    .WithBody(UpdateStatementsForAsyncMethod(anonymousMethod.Body, semanticModel, hasReturnValue));
+                    .WithBody(UpdateStatementsForAsyncMethod(anonymousMethod.Body, semanticModel, hasReturnValue, cancellationToken));
             }
 
             if (updated == null)
@@ -426,7 +538,8 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
                 method.Body,
                 semanticModel,
                 hasReturnValue,
-                returnTypeChanged);
+                returnTypeChanged,
+                cancellationToken);
 
             // Apply the changes to the document, and null out stale data.
             SyntaxAnnotation methodBookmark;
@@ -620,6 +733,61 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             return SyntaxFactory.QualifiedName(result, simpleName);
         }
 
+        internal static MemberAccessExpressionSyntax MemberAccess(IReadOnlyList<string> qualifiers, SimpleNameSyntax simpleName)
+        {
+            if (qualifiers == null)
+            {
+                throw new ArgumentNullException(nameof(qualifiers));
+            }
+
+            if (simpleName == null)
+            {
+                throw new ArgumentNullException(nameof(simpleName));
+            }
+
+            if (qualifiers.Count == 0)
+            {
+                throw new ArgumentException("At least one qualifier required.");
+            }
+
+            ExpressionSyntax result = SyntaxFactory.IdentifierName(qualifiers[0]);
+            for (int i = 1; i < qualifiers.Count; i++)
+            {
+                var rightSide = SyntaxFactory.IdentifierName(qualifiers[i]);
+                result = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, result, rightSide);
+            }
+
+            return SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, result, simpleName);
+        }
+
+        internal static string GetFullName(ISymbol symbol)
+        {
+            if (symbol == null)
+            {
+                throw new ArgumentNullException(nameof(symbol));
+            }
+
+            var sb = new StringBuilder();
+            sb.Append(symbol.Name);
+            while (symbol.ContainingType != null)
+            {
+                sb.Insert(0, symbol.ContainingType.Name + ".");
+                symbol = symbol.ContainingType;
+            }
+
+            while (symbol.ContainingNamespace != null)
+            {
+                if (!string.IsNullOrEmpty(symbol.ContainingNamespace.Name))
+                {
+                    sb.Insert(0, symbol.ContainingNamespace.Name + ".");
+                }
+
+                symbol = symbol.ContainingNamespace;
+            }
+
+            return sb.ToString();
+        }
+
         /// <summary>
         /// Determines whether an expression appears inside a C# "nameof" pseudo-method.
         /// </summary>
@@ -656,24 +824,52 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             return $"https://github.com/Microsoft/vs-threading/blob/master/doc/analyzers/{analyzerId}.md";
         }
 
-        private static CSharpSyntaxNode UpdateStatementsForAsyncMethod(CSharpSyntaxNode body, SemanticModel semanticModel, bool hasResultValue)
+        internal static T FirstAncestor<T>(this SyntaxNode startingNode, IReadOnlyCollection<Type> doNotPassNodeTypes)
+            where T : SyntaxNode
+        {
+            if (doNotPassNodeTypes == null)
+            {
+                throw new ArgumentNullException(nameof(doNotPassNodeTypes));
+            }
+
+            var syntaxNode = startingNode;
+            while (syntaxNode != null)
+            {
+                if (syntaxNode is T result)
+                {
+                    return result;
+                }
+
+                if (doNotPassNodeTypes.Any(disallowed => disallowed.GetTypeInfo().IsAssignableFrom(syntaxNode.GetType().GetTypeInfo())))
+                {
+                    return default(T);
+                }
+
+                syntaxNode = syntaxNode.Parent;
+            }
+
+            return default(T);
+        }
+
+        private static CSharpSyntaxNode UpdateStatementsForAsyncMethod(CSharpSyntaxNode body, SemanticModel semanticModel, bool hasResultValue, CancellationToken cancellationToken)
         {
             var blockBody = body as BlockSyntax;
             if (blockBody != null)
             {
-                return UpdateStatementsForAsyncMethod(blockBody, semanticModel, hasResultValue, returnTypeChanged: false/*probably not right, but we don't have a failing test yet.*/);
+                bool returnTypeChanged = false; // probably not right, but we don't have a failing test yet.
+                return UpdateStatementsForAsyncMethod(blockBody, semanticModel, hasResultValue, returnTypeChanged, cancellationToken);
             }
 
             var expressionBody = body as ExpressionSyntax;
             if (expressionBody != null)
             {
-                return SyntaxFactory.AwaitExpression(expressionBody).TrySimplify(expressionBody, semanticModel);
+                return SyntaxFactory.AwaitExpression(expressionBody).TrySimplify(expressionBody, semanticModel, cancellationToken);
             }
 
             throw new NotSupportedException();
         }
 
-        private static BlockSyntax UpdateStatementsForAsyncMethod(BlockSyntax body, SemanticModel semanticModel, bool hasResultValue, bool returnTypeChanged)
+        private static BlockSyntax UpdateStatementsForAsyncMethod(BlockSyntax body, SemanticModel semanticModel, bool hasResultValue, bool returnTypeChanged, CancellationToken cancellationToken)
         {
             var fixedUpBlock = body.ReplaceNodes(
                 body.DescendantNodes().OfType<ReturnStatementSyntax>(),
@@ -683,7 +879,7 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
                     {
                         return returnTypeChanged
                             ? n
-                            : n.WithExpression(SyntaxFactory.AwaitExpression(n.Expression).TrySimplify(f.Expression, semanticModel));
+                            : n.WithExpression(SyntaxFactory.AwaitExpression(n.Expression).TrySimplify(f.Expression, semanticModel, cancellationToken));
                     }
 
                     if (body.Statements.Last() == f)
@@ -700,7 +896,7 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             return fixedUpBlock;
         }
 
-        private static ExpressionSyntax TrySimplify(this AwaitExpressionSyntax awaitExpression, ExpressionSyntax originalSyntax, SemanticModel semanticModel)
+        private static ExpressionSyntax TrySimplify(this AwaitExpressionSyntax awaitExpression, ExpressionSyntax originalSyntax, SemanticModel semanticModel, CancellationToken cancellationToken)
         {
             if (awaitExpression == null)
             {
@@ -715,8 +911,8 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
                 if (awaitedInvocationMemberAccess?.Name.Identifier.Text == nameof(Task.FromResult))
                 {
                     // Is the FromResult method on the Task or Task<T> class?
-                    var memberOwnerSymbol = semanticModel.GetSymbolInfo(originalSyntax).Symbol;
-                    if (memberOwnerSymbol?.ContainingType?.Name == nameof(Task) && memberOwnerSymbol.ContainingType.BelongsToNamespace(Namespaces.SystemThreadingTasks))
+                    var memberOwnerSymbol = semanticModel.GetSymbolInfo(originalSyntax, cancellationToken).Symbol;
+                    if (IsTask(memberOwnerSymbol?.ContainingType))
                     {
                         var simplified = awaitedInvocation.ArgumentList.Arguments.Single().Expression;
                         return simplified;
@@ -733,6 +929,27 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             System.Diagnostics.Debugger.Launch();
 #endif
             return true;
+        }
+
+        internal struct ContainingFunctionData
+        {
+            internal ContainingFunctionData(CSharpSyntaxNode function, bool isAsync, ParameterListSyntax parameterList, CSharpSyntaxNode blockOrExpression)
+            {
+                this.Function = function;
+                this.IsAsync = isAsync;
+                this.ParameterList = parameterList;
+                this.BlockOrExpression = blockOrExpression;
+            }
+
+            internal CSharpSyntaxNode Function { get; set; }
+
+#pragma warning disable AvoidAsyncSuffix // Avoid Async suffix
+            internal bool IsAsync { get; set; }
+#pragma warning restore AvoidAsyncSuffix // Avoid Async suffix
+
+            internal ParameterListSyntax ParameterList { get; set; }
+
+            internal CSharpSyntaxNode BlockOrExpression { get; set; }
         }
 
         private class AwaitCallRewriter : CSharpSyntaxRewriter

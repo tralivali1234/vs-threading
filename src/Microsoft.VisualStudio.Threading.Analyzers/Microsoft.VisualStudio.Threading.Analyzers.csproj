@@ -19,6 +19,8 @@
 
     <!-- Analyzers should not be added to the lib folder. -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);PackBuildOutputs</TargetsForTfmSpecificContentInPackage>
   </PropertyGroup>
   <PropertyGroup Label="MultilingualAppToolkit">
     <MultilingualAppToolkitVersion>4.0</MultilingualAppToolkitVersion>
@@ -38,6 +40,10 @@
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Strings.Designer.cs</LastGenOutput>
     </EmbeddedResource>
+    <EmbeddedResource Update="Strings.??*.resx">
+      <DependentUpon>Strings.resx</DependentUpon>
+      <Generator />
+    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
     <Content Include="build\**" Pack="true" PackagePath="build\" />
@@ -54,19 +60,19 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="1.2.0" />
     <PackageReference Include="MicroBuild.VisualStudio" Version="$(MicroBuildVersion)" />
-    <PackageReference Include="GitLink" Version="3.2.0-unstable0014" PrivateAssets="all" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.1" />
+    <PackageReference Include="GitLink" Version="3.2.0-unstable0014" />
     <PackageReference Include="System.ValueTuple" Version="4.3.0" />
-    <PackageReference Include="AsyncUsageAnalyzers" Version="1.0.0-alpha003" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\Multilingual App Toolkit\Microsoft.Multilingual.ResxResources.targets" Label="MultilingualAppToolkit" Condition="Exists('$(MSBuildExtensionsPath)\Microsoft\Multilingual App Toolkit\v$(MultilingualAppToolkitVersion)\Microsoft.Multilingual.ResxResources.targets')" />
   <Target Name="MATPrerequisite" BeforeTargets="PrepareForBuild" Condition="!Exists('$(MSBuildExtensionsPath)\Microsoft\Multilingual App Toolkit\Microsoft.Multilingual.ResxResources.targets')" Label="MultilingualAppToolkit">
     <Warning Text="$(MSBuildProjectFile) is Multilingual build enabled, but the Multilingual App Toolkit is unavailable during the build. If building with Visual Studio, please check to ensure that toolkit is properly installed." />
   </Target>
-  <Target Name="PackBuildOutputs" BeforeTargets="_GetPackageFiles" DependsOnTargets="SatelliteDllsProjectOutputGroup;DebugSymbolsProjectOutputGroup">
+  <Target Name="PackBuildOutputs" DependsOnTargets="SatelliteDllsProjectOutputGroup;DebugSymbolsProjectOutputGroup">
     <ItemGroup>
-      <Content Include="$(TargetPath)" Pack="true" PackagePath="analyzers\cs\" />
-      <!--<Content Include="@(DebugSymbolsProjectOutputGroupOutput)" Pack="true" PackagePath="analyzers\cs\" />-->
-      <Content Include="@(SatelliteDllsProjectOutputGroupOutput)" Pack="true" PackagePath="analyzers\cs\%(SatelliteDllsProjectOutputGroupOutput.Culture)\" />
+      <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="analyzers\cs\" />
+      <!--<TfmSpecificPackageFile Include="@(DebugSymbolsProjectOutputGroupOutput)" PackagePath="analyzers\cs\" />-->
+      <TfmSpecificPackageFile Include="@(SatelliteDllsProjectOutputGroupOutput->'%(FinalOutputPath)')" PackagePath="analyzers\cs\%(SatelliteDllsProjectOutputGroupOutput.Culture)\" />
     </ItemGroup>
   </Target>
   <Target Name="SetNuSpecProperties" BeforeTargets="GenerateNuspec" DependsOnTargets="GetBuildVersion">

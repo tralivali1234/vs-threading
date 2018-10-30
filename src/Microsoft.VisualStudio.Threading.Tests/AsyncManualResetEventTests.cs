@@ -59,7 +59,7 @@
             this.evt.Set();
             Assert.True(this.evt.IsSet);
             setReturned.Set();
-            Assert.True(inlinedContinuation.Wait(AsyncDelay));
+            Assert.True(inlinedContinuation.Wait(UnexpectedTimeout));
         }
 
         [Fact]
@@ -226,6 +226,16 @@
                 // after creation of the AMRE, since we're testing for possible asynchronously completing Tasks.
                 Assert.True(presignaledEvent.WaitAsync().IsCompleted);
             }
+        }
+
+        [Fact]
+        public async Task WaitAsyncWithCancellationToken()
+        {
+            var cts = new CancellationTokenSource();
+            Task waitTask = this.evt.WaitAsync(cts.Token);
+            cts.Cancel();
+            var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waitTask);
+            Assert.Equal(cts.Token, ex.CancellationToken);
         }
     }
 }

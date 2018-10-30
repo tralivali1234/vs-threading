@@ -12,6 +12,7 @@ namespace Microsoft.VisualStudio.Threading
     using System.Diagnostics;
     using System.Diagnostics.CodeAnalysis;
     using System.Runtime.CompilerServices;
+    using System.Security;
     using System.Threading;
     using System.Threading.Tasks;
 #if DESKTOP
@@ -261,12 +262,12 @@ namespace Microsoft.VisualStudio.Threading
                         }
 
                         if (keepAliveCount == 1)
-                          {
+                        {
                             Assumes.Null(liveThread);
                             liveThread = new Thread(Worker, SmallThreadStackSize)
                             {
                                 IsBackground = true,
-                                Name = "Registry watcher"
+                                Name = "Registry watcher",
                             };
                             liveThread.Start();
                         }
@@ -411,6 +412,41 @@ namespace Microsoft.VisualStudio.Threading
         }
 
         /// <summary>
+        /// Gets an awaitable that schedules the continuation with a preference to executing synchronously on the callstack that completed the <see cref="Task"/>,
+        /// without regard to thread ID or any <see cref="SynchronizationContext"/> that may be applied when the continuation is scheduled or when the antecedent completes.
+        /// </summary>
+        /// <param name="antecedent">The task to await on.</param>
+        /// <returns>An awaitable.</returns>
+        /// <remarks>
+        /// If there is not enough stack space remaining on the thread that is completing the <paramref name="antecedent"/> <see cref="Task"/>,
+        /// the continuation may be scheduled on the threadpool.
+        /// </remarks>
+        public static ExecuteContinuationSynchronouslyAwaitable ConfigureAwaitRunInline(this Task antecedent)
+        {
+            Requires.NotNull(antecedent, nameof(antecedent));
+
+            return new ExecuteContinuationSynchronouslyAwaitable(antecedent);
+        }
+
+        /// <summary>
+        /// Gets an awaitable that schedules the continuation with a preference to executing synchronously on the callstack that completed the <see cref="Task"/>,
+        /// without regard to thread ID or any <see cref="SynchronizationContext"/> that may be applied when the continuation is scheduled or when the antecedent completes.
+        /// </summary>
+        /// <typeparam name="T">The type of value returned by the awaited <see cref="Task"/>.</typeparam>
+        /// <param name="antecedent">The task to await on.</param>
+        /// <returns>An awaitable.</returns>
+        /// <remarks>
+        /// If there is not enough stack space remaining on the thread that is completing the <paramref name="antecedent"/> <see cref="Task"/>,
+        /// the continuation may be scheduled on the threadpool.
+        /// </remarks>
+        public static ExecuteContinuationSynchronouslyAwaitable<T> ConfigureAwaitRunInline<T>(this Task<T> antecedent)
+        {
+            Requires.NotNull(antecedent, nameof(antecedent));
+
+            return new ExecuteContinuationSynchronouslyAwaitable<T>(antecedent);
+        }
+
+        /// <summary>
         /// An awaitable that executes continuations on the specified task scheduler.
         /// </summary>
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1815:OverrideEqualsAndOperatorEqualsOnValueTypes")]
@@ -454,7 +490,7 @@ namespace Microsoft.VisualStudio.Threading
         /// An awaiter returned from <see cref="GetAwaiter(TaskScheduler)"/>.
         /// </summary>
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1815:OverrideEqualsAndOperatorEqualsOnValueTypes")]
-        public struct TaskSchedulerAwaiter : INotifyCompletion
+        public struct TaskSchedulerAwaiter : ICriticalNotifyCompletion
         {
             /// <summary>
             /// The scheduler for continuations.
@@ -516,7 +552,36 @@ namespace Microsoft.VisualStudio.Threading
             /// <param name="continuation">The delegate to invoke.</param>
             public void OnCompleted(Action continuation)
             {
-                Task.Factory.StartNew(continuation, CancellationToken.None, TaskCreationOptions.None, this.scheduler);
+                if (this.scheduler == TaskScheduler.Default)
+                {
+                    ThreadPool.QueueUserWorkItem(state => ((Action)state)(), continuation);
+                }
+                else
+                {
+                    Task.Factory.StartNew(continuation, CancellationToken.None, TaskCreationOptions.None, this.scheduler);
+                }
+            }
+
+            /// <summary>
+            /// Schedules a continuation to execute using the specified task scheduler
+            /// without capturing the ExecutionContext.
+            /// </summary>
+            /// <param name="continuation">The action.</param>
+            public void UnsafeOnCompleted(Action continuation)
+            {
+                if (this.scheduler == TaskScheduler.Default)
+                {
+#if THREADPOOL
+                    ThreadPool.UnsafeQueueUserWorkItem(state => ((Action)state)(), continuation);
+#else
+                    ThreadPool.QueueUserWorkItem(state => ((Action)state)(), continuation);
+#endif
+                }
+                else
+                {
+                    // There is no API for scheduling a Task without capturing the ExecutionContext.
+                    Task.Factory.StartNew(continuation, CancellationToken.None, TaskCreationOptions.None, this.scheduler);
+                }
             }
 
             /// <summary>
@@ -562,7 +627,7 @@ namespace Microsoft.VisualStudio.Threading
         /// then immediately resume, possibly on the original <see cref="SynchronizationContext"/>.
         /// </summary>
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1815:OverrideEqualsAndOperatorEqualsOnValueTypes")]
-        public struct ConfiguredTaskYieldAwaiter : INotifyCompletion
+        public struct ConfiguredTaskYieldAwaiter : ICriticalNotifyCompletion
         {
             /// <summary>
             /// A value indicating whether the continuation should run on the captured <see cref="SynchronizationContext"/>, if any.
@@ -602,11 +667,189 @@ namespace Microsoft.VisualStudio.Threading
             }
 
             /// <summary>
+            /// Schedules a delegate for execution at the conclusion of a task's execution
+            /// without capturing the ExecutionContext.
+            /// </summary>
+            /// <param name="continuation">The action.</param>
+            public void UnsafeOnCompleted(Action continuation)
+            {
+                if (this.continueOnCapturedContext)
+                {
+                    Task.Yield().GetAwaiter().UnsafeOnCompleted(continuation);
+                }
+                else
+                {
+#if THREADPOOL
+                    ThreadPool.UnsafeQueueUserWorkItem(state => ((Action)state)(), continuation);
+#else
+                    ThreadPool.QueueUserWorkItem(state => ((Action)state)(), continuation);
+#endif
+                }
+            }
+
+            /// <summary>
             /// Does nothing.
             /// </summary>
             [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1822:MarkMembersAsStatic")]
             public void GetResult()
             {
+            }
+        }
+
+        /// <summary>
+        /// A Task awaitable that has affinity to executing callbacks synchronously on the completing callstack.
+        /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1815:OverrideEqualsAndOperatorEqualsOnValueTypes")]
+        public struct ExecuteContinuationSynchronouslyAwaitable
+        {
+            /// <summary>
+            /// The task whose completion will execute the continuation.
+            /// </summary>
+            private readonly Task antecedent;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="ExecuteContinuationSynchronouslyAwaitable"/> struct.
+            /// </summary>
+            /// <param name="antecedent">The task whose completion will execute the continuation.</param>
+            public ExecuteContinuationSynchronouslyAwaitable(Task antecedent)
+            {
+                Requires.NotNull(antecedent, nameof(antecedent));
+                this.antecedent = antecedent;
+            }
+
+            /// <summary>
+            /// Gets the awaiter.
+            /// </summary>
+            /// <returns>The awaiter</returns>
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1024:UsePropertiesWhereAppropriate")]
+            public ExecuteContinuationSynchronouslyAwaiter GetAwaiter() => new ExecuteContinuationSynchronouslyAwaiter(this.antecedent);
+        }
+
+        /// <summary>
+        /// A Task awaiter that has affinity to executing callbacks synchronously on the completing callstack.
+        /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1815:OverrideEqualsAndOperatorEqualsOnValueTypes")]
+        public struct ExecuteContinuationSynchronouslyAwaiter : INotifyCompletion
+        {
+            /// <summary>
+            /// The task whose completion will execute the continuation.
+            /// </summary>
+            private readonly Task antecedent;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="ExecuteContinuationSynchronouslyAwaiter"/> struct.
+            /// </summary>
+            /// <param name="antecedent">The task whose completion will execute the continuation.</param>
+            public ExecuteContinuationSynchronouslyAwaiter(Task antecedent)
+            {
+                Requires.NotNull(antecedent, nameof(antecedent));
+                this.antecedent = antecedent;
+            }
+
+            /// <summary>
+            /// Gets a value indicating whether the antedent <see cref="Task"/> has already completed.
+            /// </summary>
+            public bool IsCompleted => this.antecedent.IsCompleted;
+
+            /// <summary>
+            /// Rethrows any exception thrown by the antecedent.
+            /// </summary>
+            public void GetResult() => this.antecedent.GetAwaiter().GetResult();
+
+            /// <summary>
+            /// Schedules a callback to run when the antecedent task completes.
+            /// </summary>
+            /// <param name="continuation">The callback to invoke.</param>
+            public void OnCompleted(Action continuation)
+            {
+                Requires.NotNull(continuation, nameof(continuation));
+
+                this.antecedent.ContinueWith(
+                    (_, s) => ((Action)s)(),
+                    continuation,
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
+        }
+
+        /// <summary>
+        /// A Task awaitable that has affinity to executing callbacks synchronously on the completing callstack.
+        /// </summary>
+        /// <typeparam name="T">The type of value returned by the awaited <see cref="Task"/>.</typeparam>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1815:OverrideEqualsAndOperatorEqualsOnValueTypes")]
+        public struct ExecuteContinuationSynchronouslyAwaitable<T>
+        {
+            /// <summary>
+            /// The task whose completion will execute the continuation.
+            /// </summary>
+            private readonly Task<T> antecedent;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="ExecuteContinuationSynchronouslyAwaitable{T}"/> struct.
+            /// </summary>
+            /// <param name="antecedent">The task whose completion will execute the continuation.</param>
+            public ExecuteContinuationSynchronouslyAwaitable(Task<T> antecedent)
+            {
+                Requires.NotNull(antecedent, nameof(antecedent));
+                this.antecedent = antecedent;
+            }
+
+            /// <summary>
+            /// Gets the awaiter.
+            /// </summary>
+            /// <returns>The awaiter</returns>
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1024:UsePropertiesWhereAppropriate")]
+            public ExecuteContinuationSynchronouslyAwaiter<T> GetAwaiter() => new ExecuteContinuationSynchronouslyAwaiter<T>(this.antecedent);
+        }
+
+        /// <summary>
+        /// A Task awaiter that has affinity to executing callbacks synchronously on the completing callstack.
+        /// </summary>
+        /// <typeparam name="T">The type of value returned by the awaited <see cref="Task"/>.</typeparam>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1815:OverrideEqualsAndOperatorEqualsOnValueTypes")]
+        public struct ExecuteContinuationSynchronouslyAwaiter<T> : INotifyCompletion
+        {
+            /// <summary>
+            /// The task whose completion will execute the continuation.
+            /// </summary>
+            private readonly Task<T> antecedent;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="ExecuteContinuationSynchronouslyAwaiter{T}"/> struct.
+            /// </summary>
+            /// <param name="antecedent">The task whose completion will execute the continuation.</param>
+            public ExecuteContinuationSynchronouslyAwaiter(Task<T> antecedent)
+            {
+                Requires.NotNull(antecedent, nameof(antecedent));
+                this.antecedent = antecedent;
+            }
+
+            /// <summary>
+            /// Gets a value indicating whether the antedent <see cref="Task"/> has already completed.
+            /// </summary>
+            public bool IsCompleted => this.antecedent.IsCompleted;
+
+            /// <summary>
+            /// Rethrows any exception thrown by the antecedent.
+            /// </summary>
+            [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1024:UsePropertiesWhereAppropriate")]
+            public T GetResult() => this.antecedent.GetAwaiter().GetResult();
+
+            /// <summary>
+            /// Schedules a callback to run when the antecedent task completes.
+            /// </summary>
+            /// <param name="continuation">The callback to invoke.</param>
+            public void OnCompleted(Action continuation)
+            {
+                Requires.NotNull(continuation, nameof(continuation));
+
+                this.antecedent.ContinueWith(
+                    (_, s) => ((Action)s)(),
+                    continuation,
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
             }
         }
     }

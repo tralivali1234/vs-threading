@@ -6,6 +6,7 @@
     using System.Diagnostics;
     using System.Linq;
     using System.Reflection;
+    using System.Runtime.CompilerServices;
     using System.Text;
     using System.Threading;
     using System.Threading.Tasks;
@@ -325,6 +326,154 @@
             catch (OperationCanceledException)
             {
             }
+        }
+
+        [StaFact]
+        public void SwitchToMainThreadAsync_Await_CapturesExecutionContext()
+        {
+            this.SimulateUIThread(async delegate
+            {
+                await TaskScheduler.Default;
+                Assert.NotEqual(this.originalThreadManagedId, Environment.CurrentManagedThreadId);
+                AsyncLocal<object> asyncLocal = new AsyncLocal<object>();
+                asyncLocal.Value = "expected";
+                await this.asyncPump.SwitchToMainThreadAsync();
+                Assert.Equal(this.originalThreadManagedId, Environment.CurrentManagedThreadId);
+                Assert.Equal("expected", asyncLocal.Value);
+            });
+        }
+
+        [Fact]
+        public void SwitchToMainThreadAsync_Await_Canceled_CapturesExecutionContext()
+        {
+            var factory = (DerivedJoinableTaskFactory)this.asyncPump;
+            var cts = new CancellationTokenSource();
+            var transitionRequested = new ManualResetEventSlim();
+            factory.TransitioningToMainThreadCallback = jt => transitionRequested.Set();
+            var task = Task.Run(async delegate
+            {
+                AsyncLocal<object> asyncLocal = new AsyncLocal<object>();
+                asyncLocal.Value = "expected";
+                await Assert.ThrowsAsync<OperationCanceledException>(async () => await this.asyncPump.SwitchToMainThreadAsync(cts.Token));
+                Assert.NotEqual(this.originalThreadManagedId, Environment.CurrentManagedThreadId);
+                Assert.Equal("expected", asyncLocal.Value);
+            });
+            transitionRequested.Wait();
+            cts.Cancel();
+            task.Wait(this.TimeoutToken);
+        }
+
+#if !NETCOREAPP1_0
+        [Fact]
+#endif
+        public void SwitchToMainThreadAsync_UnsafeOnCompleted_DoesNotCaptureExecutionContext()
+        {
+            this.SimulateUIThread(async delegate
+            {
+                await TaskScheduler.Default;
+                var testResultSource = new TaskCompletionSource<object>();
+                AsyncLocal<object> asyncLocal = new AsyncLocal<object>();
+                asyncLocal.Value = "expected";
+                this.asyncPump.SwitchToMainThreadAsync().GetAwaiter().UnsafeOnCompleted(delegate
+                {
+                    try
+                    {
+                        Assert.Equal(this.originalThreadManagedId, Environment.CurrentManagedThreadId);
+                        Assert.Null(asyncLocal.Value);
+                        testResultSource.SetResult(null);
+                    }
+                    catch (Exception ex)
+                    {
+                        testResultSource.SetException(ex);
+                    }
+                });
+                await testResultSource.Task;
+            });
+        }
+
+#if !NETCOREAPP1_0
+        [Fact]
+#endif
+        public void SwitchToMainThreadAsync_UnsafeOnCompleted_DoesNotCaptureExecutionContext_WhenCanceled()
+        {
+            this.SimulateUIThread(delegate
+            {
+                var testResultSource = new TaskCompletionSource<object>();
+                AsyncLocal<object> asyncLocal = new AsyncLocal<object>();
+                asyncLocal.Value = "expected";
+                var cts = new CancellationTokenSource();
+                this.asyncPump.SwitchToMainThreadAsync(cts.Token).GetAwaiter().UnsafeOnCompleted(delegate
+                {
+                    try
+                    {
+                        Assert.NotEqual(this.originalThreadManagedId, Environment.CurrentManagedThreadId);
+                        Assert.Null(asyncLocal.Value);
+                        testResultSource.SetResult(null);
+                    }
+                    catch (Exception ex)
+                    {
+                        testResultSource.SetException(ex);
+                    }
+                });
+                cts.Cancel();
+                testResultSource.Task.Wait(this.TimeoutToken);
+                return TplExtensions.CompletedTask;
+            });
+        }
+
+        [Fact]
+        public void SwitchToMainThreadAsync_OnCompleted_CapturesExecutionContext()
+        {
+            this.SimulateUIThread(async delegate
+            {
+                await TaskScheduler.Default;
+                var testResultSource = new TaskCompletionSource<object>();
+                AsyncLocal<object> asyncLocal = new AsyncLocal<object>();
+                asyncLocal.Value = "expected";
+                this.asyncPump.SwitchToMainThreadAsync().GetAwaiter().OnCompleted(delegate
+                {
+                    try
+                    {
+                        Assert.Equal(this.originalThreadManagedId, Environment.CurrentManagedThreadId);
+                        Assert.Equal("expected", asyncLocal.Value);
+                        testResultSource.SetResult(null);
+                    }
+                    catch (Exception ex)
+                    {
+                        testResultSource.SetException(ex);
+                    }
+                });
+                await testResultSource.Task;
+            });
+        }
+
+        [Fact]
+        public void SwitchToMainThreadAsync_OnCompleted_CapturesExecutionContext_WhenCanceled()
+        {
+            this.SimulateUIThread(delegate
+            {
+                var testResultSource = new TaskCompletionSource<object>();
+                AsyncLocal<object> asyncLocal = new AsyncLocal<object>();
+                asyncLocal.Value = "expected";
+                var cts = new CancellationTokenSource();
+                this.asyncPump.SwitchToMainThreadAsync(cts.Token).GetAwaiter().OnCompleted(delegate
+                {
+                    try
+                    {
+                        Assert.NotEqual(this.originalThreadManagedId, Environment.CurrentManagedThreadId);
+                        Assert.Equal("expected", asyncLocal.Value);
+                        testResultSource.SetResult(null);
+                    }
+                    catch (Exception ex)
+                    {
+                        testResultSource.SetException(ex);
+                    }
+                });
+                asyncLocal.Value = null;
+                cts.Cancel();
+                testResultSource.Task.Wait(this.TimeoutToken);
+                return TplExtensions.CompletedTask;
+            });
         }
 
         /// <summary>
@@ -2507,31 +2656,7 @@
         [SkippableFact]
         public void NestedFactoriesCanBeCollected()
         {
-            var outerFactory = new ModalPumpingJoinableTaskFactory(this.context);
-            var innerFactory = new ModalPumpingJoinableTaskFactory(this.context);
-
-            JoinableTask inner = null;
-            var outer = outerFactory.RunAsync(async delegate
-            {
-                inner = innerFactory.RunAsync(async delegate
-                {
-                    await Task.Yield();
-                });
-                await inner;
-            });
-
-            outerFactory.DoModalLoopTillEmptyAndTaskCompleted(outer.Task, this.TimeoutToken);
-            Skip.IfNot(outer.IsCompleted, "this is a product defect, but this test assumes this works to test something else.");
-
-            // Allow the dispatcher to drain all messages that may be holding references.
-            SynchronizationContext.Current.Post(s => this.testFrame.Continue = false, null);
-            this.PushFrame();
-
-            // Now we verify that while 'inner' is non-null that it doesn't hold outerFactory in memory
-            // once 'inner' has completed.
-            var weakOuterFactory = new WeakReference(outerFactory);
-            outer = null;
-            outerFactory = null;
+            WeakReference weakOuterFactory = this.NestedFactoriesCanBeCollected_Helper();
             GC.Collect();
             Assert.False(weakOuterFactory.IsAlive);
         }
@@ -2959,7 +3084,7 @@
                     {
                         return completedTask;
                     });
-                }, maxBytesAllocated: 819);
+                }, maxBytesAllocated: 901);
             }
         }
 
@@ -3481,6 +3606,24 @@
             });
         }
 
+        [Fact]
+        public void ExecutionContext_DoesNotLeakJoinableTask()
+        {
+            var longLivedTaskReleaser = new AsyncManualResetEvent();
+            WeakReference weakValue = this.ExecutionContext_DoesNotLeakJoinableTask_Helper(longLivedTaskReleaser);
+            try
+            {
+                // Assert that since no one wants the JoinableTask or its result any more, it has been released.
+                GC.Collect();
+                Assert.False(weakValue.IsAlive);
+            }
+            finally
+            {
+                // Allow completion of our long-lived task.
+                longLivedTaskReleaser.Set();
+            }
+        }
+
         protected override JoinableTaskContext CreateJoinableTaskContext()
         {
             return new DerivedJoinableTaskContext();
@@ -3546,6 +3689,35 @@
             }
         }
 
+        [MethodImpl(MethodImplOptions.NoInlining)] // must not be inlined so that locals are guaranteed to be freed.
+        private WeakReference NestedFactoriesCanBeCollected_Helper()
+        {
+            var outerFactory = new ModalPumpingJoinableTaskFactory(this.context);
+            var innerFactory = new ModalPumpingJoinableTaskFactory(this.context);
+
+            JoinableTask inner = null;
+            var outer = outerFactory.RunAsync(async delegate
+            {
+                inner = innerFactory.RunAsync(async delegate
+                {
+                    await Task.Yield();
+                });
+                await inner;
+            });
+
+            outerFactory.DoModalLoopTillEmptyAndTaskCompleted(outer.Task, this.TimeoutToken);
+            Skip.IfNot(outer.IsCompleted, "this is a product defect, but this test assumes this works to test something else.");
+
+            // Allow the dispatcher to drain all messages that may be holding references.
+            SynchronizationContext.Current.Post(s => this.testFrame.Continue = false, null);
+            this.PushFrame();
+
+            // Now we verify that while 'inner' is non-null that it doesn't hold outerFactory in memory
+            // once 'inner' has completed.
+            var weakOuterFactory = new WeakReference(outerFactory);
+            return weakOuterFactory;
+        }
+
         private void RunFuncOfTaskHelper()
         {
             var initialThread = Environment.CurrentManagedThreadId;
@@ -3582,6 +3754,32 @@
             var report = contributor.GetHangReport();
             this.Logger.WriteLine("DGML task graph");
             this.Logger.WriteLine(report.Content);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)] // must not be inlined so that locals are guaranteed to be freed.
+        private WeakReference ExecutionContext_DoesNotLeakJoinableTask_Helper(AsyncManualResetEvent releaser)
+        {
+            object leakedValue = new object();
+            WeakReference weakValue = new WeakReference(leakedValue);
+            Task longLivedTask = null;
+
+            this.asyncPump.RunAsync(delegate
+            {
+                // Spin off a task that will "capture" the current running JoinableTask
+                longLivedTask = Task.Factory.StartNew(
+                    async r =>
+                    {
+                        await ((AsyncManualResetEvent)r).WaitAsync();
+                    },
+                    releaser,
+                    CancellationToken.None,
+                    TaskCreationOptions.None,
+                    TaskScheduler.Default).Unwrap();
+
+                return Task.FromResult(leakedValue);
+            });
+
+            return weakValue;
         }
 
         /// <summary>
@@ -3759,7 +3957,7 @@
             {
                 Assert.NotNull(this.UnderlyingSynchronizationContext);
                 Assert.NotNull(callback);
-                Assert.True(SingleThreadedSynchronizationContext.IsSingleThreadedSyncContext(this.UnderlyingSynchronizationContext));
+                Assert.True(SingleThreadedTestSynchronizationContext.IsSingleThreadedSyncContext(this.UnderlyingSynchronizationContext));
                 base.PostToUnderlyingSynchronizationContext(callback, state);
                 this.PostToUnderlyingSynchronizationContextCallback?.Invoke();
             }

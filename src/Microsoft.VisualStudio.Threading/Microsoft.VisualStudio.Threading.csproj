@@ -6,6 +6,7 @@
 
     <TargetsDesktop Condition=" '$(TargetFramework)' == 'net45' or '$(TargetFramework)' == 'net46' ">true</TargetsDesktop>
     <DefineConstants Condition=" '$(TargetsDesktop)' == 'true' ">$(DefineConstants);DESKTOP</DefineConstants>
+    <DefineConstants Condition=" '$(TargetFramework)' != 'netstandard1.1' and '$(TargetFramework)' != 'portable-net45+win8+wpa81' ">$(DefineConstants);EXECUTIONCONTEXT</DefineConstants>
     <DefineConstants Condition=" '$(TargetFramework)' == 'net46' or '$(TargetFramework)' == 'netstandard1.3' or '$(TargetFramework)' == 'netstandard2.0' ">$(DefineConstants);ASYNCLOCAL</DefineConstants>
     <DefineConstants Condition=" '$(TargetFramework)' == 'net46' or '$(TargetFramework)' == 'netstandard1.3' or '$(TargetFramework)' == 'netstandard2.0' ">$(DefineConstants);TRYSETCANCELEDCT</DefineConstants>
     <DefineConstants Condition=" '$(TargetsDesktop)' == 'true' ">$(DefineConstants);CALLCONTEXT</DefineConstants>
@@ -24,6 +25,9 @@
     <DebugType>full</DebugType>
     <RunCodeAnalysis Condition=" '$(TargetFramework)' != 'portable-net45+win8+wpa81' and '$(TargetFramework)' != 'netstandard2.0' and '$(Configuration)' != 'Debug' ">true</RunCodeAnalysis>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Reference directly to use 4.3.1 and suppress package restore warnings. See https://github.com/dotnet/corefx/issues/29907 and https://github.com/AArnott/vs-threading/commit/357f279e44d150d2dbc305cf81fd549f2cbaed2d -->
+    <RuntimeIdentifiers Condition="'$(TargetFramework)' == 'portable-net45+win8+wpa81'">;</RuntimeIdentifiers>
   </PropertyGroup>
   <PropertyGroup Label="MultilingualAppToolkit">
     <MultilingualAppToolkitVersion>4.0</MultilingualAppToolkitVersion>
@@ -35,6 +39,10 @@
     <EmbeddedResource Update="Strings.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Strings.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Strings.??*.resx">
+      <DependentUpon>Strings.resx</DependentUpon>
+      <Generator />
     </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>

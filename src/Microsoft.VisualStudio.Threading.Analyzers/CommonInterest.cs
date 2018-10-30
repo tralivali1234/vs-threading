@@ -1,4 +1,4 @@
-﻿namespace Microsoft.VisualStudio.Threading.Analyzers
+namespace Microsoft.VisualStudio.Threading.Analyzers
 {
     using System;
     using System.Collections.Generic;
@@ -8,6 +8,7 @@
     using System.Linq;
     using System.Runtime.CompilerServices;
     using System.Text.RegularExpressions;
+    using System.Threading;
     using System.Threading.Tasks;
     using Microsoft.CodeAnalysis;
     using Microsoft.CodeAnalysis.CSharp;
@@ -17,7 +18,8 @@
 
     internal static class CommonInterest
     {
-        internal static readonly Regex FileNamePatternForTypesRequiringMainThread = new Regex(@"^vs-threading\.TypesRequiringMainThread(\..*)?.txt$", FileNamePatternRegexOptions);
+        internal static readonly Regex FileNamePatternForLegacyThreadSwitchingMembers = new Regex(@"^vs-threading\.LegacyThreadSwitchingMembers(\..*)?.txt$", FileNamePatternRegexOptions);
+        internal static readonly Regex FileNamePatternForMembersRequiringMainThread = new Regex(@"^vs-threading\.MembersRequiringMainThread(\..*)?.txt$", FileNamePatternRegexOptions);
         internal static readonly Regex FileNamePatternForMethodsThatAssertMainThread = new Regex(@"^vs-threading\.MainThreadAssertingMethods(\..*)?.txt$", FileNamePatternRegexOptions);
         internal static readonly Regex FileNamePatternForMethodsThatSwitchToMainThread = new Regex(@"^vs-threading\.MainThreadSwitchingMethods(\..*)?.txt$", FileNamePatternRegexOptions);
 
@@ -31,31 +33,29 @@
         {
             new SyncBlockingMethod(new QualifiedMember(new QualifiedType(Namespaces.SystemThreadingTasks, nameof(Task)), nameof(Task.Wait)), null),
             new SyncBlockingMethod(new QualifiedMember(new QualifiedType(Namespaces.SystemRuntimeCompilerServices, nameof(TaskAwaiter)), nameof(TaskAwaiter.GetResult)), null),
+            new SyncBlockingMethod(new QualifiedMember(new QualifiedType(Namespaces.SystemRuntimeCompilerServices, nameof(ValueTaskAwaiter)), nameof(ValueTaskAwaiter.GetResult)), null),
         };
 
-        internal static readonly IEnumerable<SyncBlockingMethod> SyncBlockingMethods = JTFSyncBlockers.Concat(ProblematicSyncBlockingMethods);
-
-        internal static readonly IEnumerable<QualifiedMember> LegacyThreadSwitchingMethods = new[]
+        internal static readonly IEnumerable<SyncBlockingMethod> SyncBlockingMethods = JTFSyncBlockers.Concat(ProblematicSyncBlockingMethods).Concat(new[]
         {
-            new QualifiedMember(new QualifiedType(Namespaces.MicrosoftVisualStudioShell, Types.ThreadHelper.TypeName), Types.ThreadHelper.Invoke),
-            new QualifiedMember(new QualifiedType(Namespaces.MicrosoftVisualStudioShell, Types.ThreadHelper.TypeName), Types.ThreadHelper.InvokeAsync),
-            new QualifiedMember(new QualifiedType(Namespaces.MicrosoftVisualStudioShell, Types.ThreadHelper.TypeName), Types.ThreadHelper.BeginInvoke),
-            new QualifiedMember(new QualifiedType(Namespaces.SystemWindowsThreading, Types.Dispatcher.TypeName), Types.Dispatcher.Invoke),
-            new QualifiedMember(new QualifiedType(Namespaces.SystemWindowsThreading, Types.Dispatcher.TypeName), Types.Dispatcher.BeginInvoke),
-            new QualifiedMember(new QualifiedType(Namespaces.SystemWindowsThreading, Types.Dispatcher.TypeName), Types.Dispatcher.InvokeAsync),
-            new QualifiedMember(new QualifiedType(Namespaces.SystemThreading, Types.SynchronizationContext.TypeName), Types.SynchronizationContext.Send),
-            new QualifiedMember(new QualifiedType(Namespaces.SystemThreading, Types.SynchronizationContext.TypeName), Types.SynchronizationContext.Post),
-        };
+            new SyncBlockingMethod(new QualifiedMember(new QualifiedType(Namespaces.MicrosoftVisualStudioShellInterop, "IVsTask"), "Wait"), extensionMethodNamespace: Namespaces.MicrosoftVisualStudioShell),
+            new SyncBlockingMethod(new QualifiedMember(new QualifiedType(Namespaces.MicrosoftVisualStudioShellInterop, "IVsTask"), "GetResult"), extensionMethodNamespace: Namespaces.MicrosoftVisualStudioShell),
+        });
 
         internal static readonly IReadOnlyList<SyncBlockingMethod> SyncBlockingProperties = new[]
         {
             new SyncBlockingMethod(new QualifiedMember(new QualifiedType(Namespaces.SystemThreadingTasks, nameof(Task)), nameof(Task<int>.Result)), null),
+            new SyncBlockingMethod(new QualifiedMember(new QualifiedType(Namespaces.SystemThreadingTasks, nameof(ValueTask)), nameof(ValueTask<int>.Result)), null),
         };
 
         internal static readonly IEnumerable<QualifiedMember> ThreadAffinityTestingMethods = new[]
         {
             new QualifiedMember(new QualifiedType(Namespaces.MicrosoftVisualStudioShell, Types.ThreadHelper.TypeName), Types.ThreadHelper.CheckAccess),
         };
+
+        internal static readonly ImmutableArray<QualifiedMember> TaskConfigureAwait = ImmutableArray.Create(
+            new QualifiedMember(new QualifiedType(Types.Task.Namespace, Types.Task.TypeName), nameof(Task.ConfigureAwait)),
+            new QualifiedMember(new QualifiedType(Types.AwaitExtensions.Namespace, Types.AwaitExtensions.TypeName), Types.AwaitExtensions.ConfigureAwaitRunInline));
 
         internal static readonly IImmutableSet<SyntaxKind> MethodSyntaxKinds = ImmutableHashSet.Create(
             SyntaxKind.ConstructorDeclaration,
@@ -69,6 +69,10 @@
             SyntaxKind.RemoveAccessorDeclaration);
 
         private const RegexOptions FileNamePatternRegexOptions = RegexOptions.IgnoreCase | RegexOptions.Singleline;
+
+        private static readonly Regex NegatableTypeOrMemberReferenceRegex = new Regex(@"^(?<negated>!)?\[(?<typeName>[^\[\]\:]+)+\](?:\:\:(?<memberName>\S+))?\s*$", RegexOptions.Singleline | RegexOptions.CultureInvariant);
+
+        private static readonly Regex MemberReferenceRegex = new Regex(@"^\[(?<typeName>[^\[\]\:]+)+\]::(?<memberName>\S+)\s*$", RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
         /// <summary>
         /// An array with '.' as its only element.
@@ -156,35 +160,49 @@
             }
         }
 
-        internal static IEnumerable<QualifiedMember> ReadMethods(CompilationStartAnalysisContext context, Regex fileNamePattern)
+        internal static IEnumerable<QualifiedMember> ReadMethods(AnalyzerOptions analyzerOptions, Regex fileNamePattern, CancellationToken cancellationToken)
         {
-            foreach (string line in ReadAdditionalFiles(context, fileNamePattern))
+            foreach (string line in ReadAdditionalFiles(analyzerOptions, fileNamePattern, cancellationToken))
             {
-                string[] elements = line.TrimEnd(null).Split(QualifiedIdentifierSeparators);
-                string methodName = elements[elements.Length - 1];
-                string typeName = elements[elements.Length - 2];
-                var containingType = new QualifiedType(elements.Take(elements.Length - 2).ToImmutableArray(), typeName);
+                Match match = MemberReferenceRegex.Match(line);
+                if (!match.Success)
+                {
+                    throw new InvalidOperationException($"Parsing error on line: {line}");
+                }
+
+                string methodName = match.Groups["memberName"].Value;
+                string[] typeNameElements = match.Groups["typeName"].Value.Split(QualifiedIdentifierSeparators);
+                string typeName = typeNameElements[typeNameElements.Length - 1];
+                var containingType = new QualifiedType(typeNameElements.Take(typeNameElements.Length - 1).ToImmutableArray(), typeName);
                 yield return new QualifiedMember(containingType, methodName);
             }
         }
 
-        internal static IEnumerable<TypeMatchSpec> ReadTypes(CompilationStartAnalysisContext context, Regex fileNamePattern)
+        internal static IEnumerable<TypeMatchSpec> ReadTypesAndMembers(AnalyzerOptions analyzerOptions, Regex fileNamePattern, CancellationToken cancellationToken)
         {
-            foreach (string line in ReadAdditionalFiles(context, fileNamePattern))
+            foreach (string line in ReadAdditionalFiles(analyzerOptions, fileNamePattern, cancellationToken))
             {
-                bool inverted = line.StartsWith("!", StringComparison.Ordinal);
-                string[] elements = line.Substring(inverted ? 1 : 0).TrimEnd(null).Split(QualifiedIdentifierSeparators);
-                string typeName = elements[elements.Length - 1];
-                var containingNamespace = elements.Take(elements.Length - 1).ToImmutableArray();
-                yield return new TypeMatchSpec(new QualifiedType(containingNamespace, typeName), inverted);
+                Match match = NegatableTypeOrMemberReferenceRegex.Match(line);
+                if (!match.Success)
+                {
+                    throw new InvalidOperationException($"Parsing error on line: {line}");
+                }
+
+                bool inverted = match.Groups["negated"].Success;
+                string[] typeNameElements = match.Groups["typeName"].Value.Split(QualifiedIdentifierSeparators);
+                string typeName = typeNameElements[typeNameElements.Length - 1];
+                var containingNamespace = typeNameElements.Take(typeNameElements.Length - 1).ToImmutableArray();
+                var type = new QualifiedType(containingNamespace, typeName);
+                var member = match.Groups["memberName"].Success ? new QualifiedMember(type, match.Groups["memberName"].Value) : default(QualifiedMember);
+                yield return new TypeMatchSpec(type, member, inverted);
             }
         }
 
-        internal static IEnumerable<string> ReadAdditionalFiles(CompilationStartAnalysisContext context, Regex fileNamePattern)
+        internal static IEnumerable<string> ReadAdditionalFiles(AnalyzerOptions analyzerOptions, Regex fileNamePattern, CancellationToken cancellationToken)
         {
-            if (context == null)
+            if (analyzerOptions == null)
             {
-                throw new ArgumentNullException(nameof(context));
+                throw new ArgumentNullException(nameof(analyzerOptions));
             }
 
             if (fileNamePattern == null)
@@ -192,10 +210,10 @@
                 throw new ArgumentNullException(nameof(fileNamePattern));
             }
 
-            var lines = from file in context.Options.AdditionalFiles
+            var lines = from file in analyzerOptions.AdditionalFiles.OrderBy(x => x.Path, StringComparer.Ordinal)
                         let fileName = Path.GetFileName(file.Path)
                         where fileNamePattern.IsMatch(fileName)
-                        let text = file.GetText(context.CancellationToken)
+                        let text = file.GetText(cancellationToken)
                         from line in text.Lines
                         select line;
             foreach (TextLine line in lines)
@@ -222,12 +240,12 @@
             return false;
         }
 
-        internal static bool Contains(this ImmutableArray<TypeMatchSpec> types, ISymbol symbol)
+        internal static bool Contains(this ImmutableArray<TypeMatchSpec> types, ITypeSymbol typeSymbol, ISymbol memberSymbol)
         {
             TypeMatchSpec matching = default(TypeMatchSpec);
             foreach (var type in types)
             {
-                if (type.IsMatch(symbol))
+                if (type.IsMatch(typeSymbol, memberSymbol))
                 {
                     if (matching.IsEmpty || matching.IsWildcard)
                     {
@@ -246,10 +264,16 @@
 
         internal struct TypeMatchSpec
         {
-            internal TypeMatchSpec(QualifiedType type, bool inverted)
+            internal TypeMatchSpec(QualifiedType type, QualifiedMember member, bool inverted)
             {
                 this.InvertedLogic = inverted;
                 this.Type = type;
+                this.Member = member;
+
+                if (this.IsWildcard && this.Member.Name != null)
+                {
+                    throw new ArgumentException("Wildcard use is not allowed when member of type is specified.");
+                }
             }
 
             /// <summary>
@@ -258,9 +282,19 @@
             internal bool InvertedLogic { get; }
 
             /// <summary>
-            /// Gets the type described by this type entry.
+            /// Gets the type described by this entry.
             /// </summary>
             internal QualifiedType Type { get; }
+
+            /// <summary>
+            /// Gets the member described by this entry.
+            /// </summary>
+            internal QualifiedMember Member { get; }
+
+            /// <summary>
+            /// Gets a value indicating whether a member match is reuqired.
+            /// </summary>
+            internal bool IsMember => this.Member.Name != null;
 
             /// <summary>
             /// Gets a value indicating whether the typename is a wildcard.
@@ -275,10 +309,29 @@
             /// <summary>
             /// Tests whether a given symbol matches the description of a type (independent of its <see cref="InvertedLogic"/> property).
             /// </summary>
-            internal bool IsMatch(ISymbol symbol)
+            internal bool IsMatch(ITypeSymbol typeSymbol, ISymbol memberSymbol)
             {
-                return (this.IsWildcard || symbol?.Name == this.Type.Name)
-                    && symbol.BelongsToNamespace(this.Type.Namespace);
+                if (typeSymbol == null)
+                {
+                    return false;
+                }
+
+                if (!this.IsMember
+                    && (this.IsWildcard || typeSymbol.Name == this.Type.Name)
+                    && typeSymbol.BelongsToNamespace(this.Type.Namespace))
+                {
+                    return true;
+                }
+
+                if (this.IsMember
+                    && memberSymbol?.Name == this.Member.Name
+                    && typeSymbol.Name == this.Type.Name
+                    && typeSymbol.BelongsToNamespace(this.Type.Namespace))
+                {
+                    return true;
+                }
+
+                return false;
             }
         }
 
@@ -300,7 +353,7 @@
                     && symbol.BelongsToNamespace(this.Namespace);
             }
 
-            public override string ToString() => string.Join(".", this.Namespace) + "." + this.Name;
+            public override string ToString() => string.Join(".", this.Namespace.Concat(new[] { this.Name }));
         }
 
         internal struct QualifiedMember
@@ -327,15 +380,18 @@
         [DebuggerDisplay("{" + nameof(Method) + "} -> {" + nameof(AsyncAlternativeMethodName) + "}")]
         internal struct SyncBlockingMethod
         {
-            public SyncBlockingMethod(QualifiedMember method, string asyncAlternativeMethodName)
+            public SyncBlockingMethod(QualifiedMember method, string asyncAlternativeMethodName = null, IReadOnlyList<string> extensionMethodNamespace = null)
             {
                 this.Method = method;
                 this.AsyncAlternativeMethodName = asyncAlternativeMethodName;
+                this.ExtensionMethodNamespace = extensionMethodNamespace;
             }
 
             public QualifiedMember Method { get; }
 
             public string AsyncAlternativeMethodName { get; }
+
+            public IReadOnlyList<string> ExtensionMethodNamespace { get; }
         }
     }
 }

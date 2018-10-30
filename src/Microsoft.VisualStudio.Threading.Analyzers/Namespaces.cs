@@ -35,6 +35,13 @@
             nameof(global::System.Runtime.CompilerServices),
         };
 
+        internal static readonly IReadOnlyList<string> SystemRuntimeInteropServices = new[]
+        {
+            nameof(System),
+            nameof(global::System.Runtime),
+            nameof(global::System.Runtime.InteropServices),
+        };
+
         internal static readonly IReadOnlyList<string> SystemWindowsThreading = new[]
         {
             nameof(System),
@@ -54,6 +61,14 @@
             "Microsoft",
             "VisualStudio",
             "Shell",
+        };
+
+        internal static readonly IReadOnlyList<string> MicrosoftVisualStudioShellInterop = new[]
+        {
+            "Microsoft",
+            "VisualStudio",
+            "Shell",
+            "Interop",
         };
     }
 }

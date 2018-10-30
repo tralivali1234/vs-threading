@@ -14,6 +14,21 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
     /// </summary>
     internal static class Types
     {
+        internal static class AwaitExtensions
+        {
+            /// <summary>
+            /// The full name of the AwaitExtensions type.
+            /// </summary>
+            internal const string TypeName = "AwaitExtensions";
+
+            /// <summary>
+            /// The name of the ConfigureAwaitRunInline method.
+            /// </summary>
+            internal const string ConfigureAwaitRunInline = "ConfigureAwaitRunInline";
+
+            internal static readonly IReadOnlyList<string> Namespace = Namespaces.MicrosoftVisualStudioThreading;
+        }
+
         /// <summary>
         /// Contains the names of types and members within TplExtensions.
         /// </summary>
@@ -126,9 +141,46 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
         {
             internal const string TypeName = nameof(System.Threading.Tasks.Task);
 
-            internal const string Namespace = "System.Threading.Tasks.";
+            internal const string FullName = "System.Threading.Tasks." + TypeName;
 
-            internal const string FullName = Namespace + TypeName;
+            internal static readonly IReadOnlyList<string> Namespace = Namespaces.SystemThreadingTasks;
+        }
+
+        internal static class ValueTask
+        {
+            internal const string TypeName = nameof(ValueTask);
+
+            internal const string FullName = "System.Threading.Tasks." + TypeName;
+
+            internal static readonly IReadOnlyList<string> Namespace = Namespaces.SystemThreadingTasks;
+        }
+
+        internal static class CoClassAttribute
+        {
+            internal const string TypeName = nameof(System.Runtime.InteropServices.CoClassAttribute);
+
+            internal static readonly IReadOnlyList<string> Namespace = Namespaces.SystemRuntimeInteropServices;
+        }
+
+        internal static class ComImportAttribute
+        {
+            internal const string TypeName = nameof(System.Runtime.InteropServices.ComImportAttribute);
+
+            internal static readonly IReadOnlyList<string> Namespace = Namespaces.SystemRuntimeInteropServices;
+        }
+
+        internal static class InterfaceTypeAttribute
+        {
+            internal const string TypeName = nameof(System.Runtime.InteropServices.InterfaceTypeAttribute);
+
+            internal static readonly IReadOnlyList<string> Namespace = Namespaces.SystemRuntimeInteropServices;
+        }
+
+        internal static class TypeLibTypeAttribute
+        {
+            internal const string TypeName = "TypeLibTypeAttribute";
+
+            internal static readonly IReadOnlyList<string> Namespace = Namespaces.SystemRuntimeInteropServices;
         }
     }
 }

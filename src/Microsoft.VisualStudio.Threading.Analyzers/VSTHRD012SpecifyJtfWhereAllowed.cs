@@ -1,11 +1,8 @@
 ﻿namespace Microsoft.VisualStudio.Threading.Analyzers
 {
-    using System;
     using System.Collections.Generic;
     using System.Collections.Immutable;
     using System.Linq;
-    using System.Text;
-    using System.Threading.Tasks;
     using CodeAnalysis;
     using CodeAnalysis.CSharp;
     using CodeAnalysis.CSharp.Syntax;
@@ -20,6 +17,7 @@
             id: Id,
             title: Strings.VSTHRD012_Title,
             messageFormat: Strings.VSTHRD012_MessageFormat,
+            helpLinkUri: Utils.GetHelpLink(Id),
             category: "Usage",
             defaultSeverity: DiagnosticSeverity.Warning,
             isEnabledByDefault: true);
@@ -28,6 +26,8 @@
 
         public override void Initialize(AnalysisContext context)
         {
+            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.Analyze | GeneratedCodeAnalysisFlags.ReportDiagnostics);
+
             context.RegisterSyntaxNodeAction(Utils.DebuggableWrapper(this.AnalyzeInvocation), SyntaxKind.InvocationExpression);
             context.RegisterSyntaxNodeAction(Utils.DebuggableWrapper(this.AnalyzerObjectCreation), SyntaxKind.ObjectCreationExpression);
         }

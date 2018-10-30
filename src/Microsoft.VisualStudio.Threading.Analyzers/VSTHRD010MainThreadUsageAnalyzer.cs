@@ -45,28 +45,25 @@
     {
         public const string Id = "VSTHRD010";
 
-        internal static readonly DiagnosticDescriptor Descriptor = new DiagnosticDescriptor(
+        /// <summary>
+        /// The descriptor to use for diagnostics reported in synchronous methods.
+        /// </summary>
+        internal static readonly DiagnosticDescriptor DescriptorSync = new DiagnosticDescriptor(
             id: Id,
             title: Strings.VSTHRD010_Title,
-            messageFormat: Strings.VSTHRD010_MessageFormat,
+            messageFormat: Strings.VSTHRD010_MessageFormat_Sync,
             helpLinkUri: Utils.GetHelpLink(Id),
             category: "Usage",
             defaultSeverity: DiagnosticSeverity.Warning,
             isEnabledByDefault: true);
 
-        internal static readonly DiagnosticDescriptor DescriptorNoAssertingMethod = new DiagnosticDescriptor(
+        /// <summary>
+        /// The descriptor to use for diagnostics reported in async methods.
+        /// </summary>
+        internal static readonly DiagnosticDescriptor DescriptorAsync = new DiagnosticDescriptor(
             id: Id,
             title: Strings.VSTHRD010_Title,
-            messageFormat: Strings.VSTHRD010_MessageFormat_NoAssertingMethod,
-            helpLinkUri: Utils.GetHelpLink(Id),
-            category: "Usage",
-            defaultSeverity: DiagnosticSeverity.Warning,
-            isEnabledByDefault: true);
-
-        internal static readonly DiagnosticDescriptor DescriptorTransitiveMainThreadUser = new DiagnosticDescriptor(
-            id: Id,
-            title: Strings.VSTHRD010_Title,
-            messageFormat: Strings.VSTHRD010_MessageFormat_TransitiveMainThreadUser,
+            messageFormat: Strings.VSTHRD010_MessageFormat_Async,
             helpLinkUri: Utils.GetHelpLink(Id),
             category: "Usage",
             defaultSeverity: DiagnosticSeverity.Warning,
@@ -76,9 +73,8 @@
         /// A reusable value to return from <see cref="SupportedDiagnostics"/>.
         /// </summary>
         private static readonly ImmutableArray<DiagnosticDescriptor> ReusableSupportedDescriptors = ImmutableArray.Create(
-            Descriptor,
-            DescriptorNoAssertingMethod,
-            DescriptorTransitiveMainThreadUser);
+            DescriptorSync,
+            DescriptorAsync);
 
         private enum ThreadingContext
         {
@@ -110,13 +106,16 @@
 
             context.RegisterCompilationStartAction(compilationStartContext =>
             {
-                var mainThreadAssertingMethods = CommonInterest.ReadMethods(compilationStartContext, CommonInterest.FileNamePatternForMethodsThatAssertMainThread).ToImmutableArray();
-                var mainThreadSwitchingMethods = CommonInterest.ReadMethods(compilationStartContext, CommonInterest.FileNamePatternForMethodsThatSwitchToMainThread).ToImmutableArray();
-                var typesRequiringMainThread = CommonInterest.ReadTypes(compilationStartContext, CommonInterest.FileNamePatternForTypesRequiringMainThread).ToImmutableArray();
+                var mainThreadAssertingMethods = CommonInterest.ReadMethods(compilationStartContext.Options, CommonInterest.FileNamePatternForMethodsThatAssertMainThread, compilationStartContext.CancellationToken).ToImmutableArray();
+                var mainThreadSwitchingMethods = CommonInterest.ReadMethods(compilationStartContext.Options, CommonInterest.FileNamePatternForMethodsThatSwitchToMainThread, compilationStartContext.CancellationToken).ToImmutableArray();
+                var membersRequiringMainThread = CommonInterest.ReadTypesAndMembers(compilationStartContext.Options, CommonInterest.FileNamePatternForMembersRequiringMainThread, compilationStartContext.CancellationToken).ToImmutableArray();
+                var diagnosticProperties = ImmutableDictionary<string, string>.Empty
+                    .Add(CommonInterest.FileNamePatternForMethodsThatAssertMainThread.ToString(), string.Join("\n", mainThreadAssertingMethods))
+                    .Add(CommonInterest.FileNamePatternForMethodsThatSwitchToMainThread.ToString(), string.Join("\n", mainThreadSwitchingMethods));
 
                 var methodsDeclaringUIThreadRequirement = new HashSet<IMethodSymbol>();
                 var methodsAssertingUIThreadRequirement = new HashSet<IMethodSymbol>();
-                var callerToCalleeMap = new Dictionary<IMethodSymbol, HashSet<IMethodSymbol>>();
+                var callerToCalleeMap = new Dictionary<IMethodSymbol, List<CallInfo>>();
 
                 compilationStartContext.RegisterCodeBlockStartAction<SyntaxKind>(codeBlockStartContext =>
                 {
@@ -124,9 +123,10 @@
                     {
                         MainThreadAssertingMethods = mainThreadAssertingMethods,
                         MainThreadSwitchingMethods = mainThreadSwitchingMethods,
-                        TypesRequiringMainThread = typesRequiringMainThread,
+                        MembersRequiringMainThread = membersRequiringMainThread,
                         MethodsDeclaringUIThreadRequirement = methodsDeclaringUIThreadRequirement,
                         MethodsAssertingUIThreadRequirement = methodsAssertingUIThreadRequirement,
+                        DiagnosticProperties = diagnosticProperties,
                     };
                     codeBlockStartContext.RegisterSyntaxNodeAction(Utils.DebuggableWrapper(methodAnalyzer.AnalyzeInvocation), SyntaxKind.InvocationExpression);
                     codeBlockStartContext.RegisterSyntaxNodeAction(Utils.DebuggableWrapper(methodAnalyzer.AnalyzeMemberAccess), SyntaxKind.SimpleMemberAccessExpression);
@@ -145,29 +145,29 @@
                     var transitiveClosureOfMainThreadRequiringMethods = GetTransitiveClosureOfMainThreadRequiringMethods(methodsAssertingUIThreadRequirement, calleeToCallerMap);
                     foreach (var implicitUserMethod in transitiveClosureOfMainThreadRequiringMethods.Except(methodsDeclaringUIThreadRequirement))
                     {
-                        var declarationSyntax = implicitUserMethod.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax(compilationEndContext.CancellationToken);
-                        SyntaxToken memberNameSyntax = default(SyntaxToken);
-                        switch (declarationSyntax)
+                        var reportSites = from info in callerToCalleeMap[implicitUserMethod]
+                                          where transitiveClosureOfMainThreadRequiringMethods.Contains(info.MethodSymbol)
+                                          group info by info.MethodSymbol into bySymbol
+                                          select new { Location = bySymbol.First().InvocationSyntax.GetLocation(), CalleeMethod = bySymbol.Key };
+                        foreach (var site in reportSites)
                         {
-                            case MethodDeclarationSyntax methodDeclarationSyntax:
-                                memberNameSyntax = methodDeclarationSyntax.Identifier;
-                                break;
-                            case AccessorDeclarationSyntax accessorDeclarationSyntax:
-                                memberNameSyntax = accessorDeclarationSyntax.Keyword;
-                                break;
-                        }
-                        var location = memberNameSyntax.GetLocation();
-                        if (location != null)
-                        {
-                            var exampleAssertingMethod = mainThreadAssertingMethods.FirstOrDefault();
-                            compilationEndContext.ReportDiagnostic(Diagnostic.Create(DescriptorTransitiveMainThreadUser, location, exampleAssertingMethod));
+                            bool isAsync = Utils.IsAsyncReady(implicitUserMethod);
+                            var descriptor = isAsync ? DescriptorAsync : DescriptorSync;
+                            string calleeName = Utils.GetFullName(site.CalleeMethod);
+                            var formattingArgs = isAsync ? new object[] { calleeName } : new object[] { calleeName, mainThreadAssertingMethods.FirstOrDefault() };
+                            Diagnostic diagnostic = Diagnostic.Create(
+                                descriptor,
+                                site.Location,
+                                diagnosticProperties,
+                                formattingArgs);
+                            compilationEndContext.ReportDiagnostic(diagnostic);
                         }
                     }
                 });
             });
         }
 
-        private static HashSet<IMethodSymbol> GetTransitiveClosureOfMainThreadRequiringMethods(HashSet<IMethodSymbol> methodsRequiringUIThread, Dictionary<IMethodSymbol, HashSet<IMethodSymbol>> calleeToCallerMap)
+        private static HashSet<IMethodSymbol> GetTransitiveClosureOfMainThreadRequiringMethods(HashSet<IMethodSymbol> methodsRequiringUIThread, Dictionary<IMethodSymbol, List<CallInfo>> calleeToCallerMap)
         {
             var result = new HashSet<IMethodSymbol>();
 
@@ -175,9 +175,13 @@
             {
                 if (result.Add(method) && calleeToCallerMap.TryGetValue(method, out var callers))
                 {
-                    foreach (var caller in callers)
+                    // If this is an async method, do *not* propagate its thread affinity to its callers.
+                    if (!Utils.IsAsyncCompatibleReturnType(method.ReturnType))
                     {
-                        MarkMethod(caller);
+                        foreach (var caller in callers)
+                        {
+                            MarkMethod(caller.MethodSymbol);
+                        }
                     }
                 }
             }
@@ -190,7 +194,7 @@
             return result;
         }
 
-        private static void AddToCallerCalleeMap(SyntaxNodeAnalysisContext context, Dictionary<IMethodSymbol, HashSet<IMethodSymbol>> callerToCalleeMap)
+        private static void AddToCallerCalleeMap(SyntaxNodeAnalysisContext context, Dictionary<IMethodSymbol, List<CallInfo>> callerToCalleeMap)
         {
             if (Utils.IsWithinNameOf(context.Node))
             {
@@ -210,16 +214,18 @@
             }
 
             ISymbol targetMethod = null;
+            SyntaxNode locationToBlame = context.Node;
             switch (context.Node)
             {
                 case InvocationExpressionSyntax invocationExpressionSyntax:
-                    targetMethod = context.SemanticModel.GetSymbolInfo(invocationExpressionSyntax.Expression).Symbol;
+                    targetMethod = context.SemanticModel.GetSymbolInfo(invocationExpressionSyntax.Expression, context.CancellationToken).Symbol;
+                    locationToBlame = invocationExpressionSyntax.Expression;
                     break;
                 case MemberAccessExpressionSyntax memberAccessExpressionSyntax:
-                    targetMethod = GetPropertyAccessor(context.SemanticModel.GetSymbolInfo(memberAccessExpressionSyntax.Name).Symbol as IPropertySymbol);
+                    targetMethod = GetPropertyAccessor(context.SemanticModel.GetSymbolInfo(memberAccessExpressionSyntax.Name, context.CancellationToken).Symbol as IPropertySymbol);
                     break;
                 case IdentifierNameSyntax identifierNameSyntax:
-                    targetMethod = GetPropertyAccessor(context.SemanticModel.GetSymbolInfo(identifierNameSyntax).Symbol as IPropertySymbol);
+                    targetMethod = GetPropertyAccessor(context.SemanticModel.GetSymbolInfo(identifierNameSyntax, context.CancellationToken).Symbol as IPropertySymbol);
                     break;
             }
 
@@ -227,35 +233,42 @@
             {
                 lock (callerToCalleeMap)
                 {
-                    if (!callerToCalleeMap.TryGetValue(caller, out HashSet<IMethodSymbol> callees))
+                    if (!callerToCalleeMap.TryGetValue(caller, out List<CallInfo> callees))
                     {
-                        callerToCalleeMap[caller] = callees = new HashSet<IMethodSymbol>();
+                        callerToCalleeMap[caller] = callees = new List<CallInfo>();
                     }
 
-                    callees.Add(callee);
+                    callees.Add(new CallInfo { MethodSymbol = callee, InvocationSyntax = locationToBlame });
                 }
             }
         }
 
-        private static Dictionary<IMethodSymbol, HashSet<IMethodSymbol>> CreateCalleeToCallerMap(Dictionary<IMethodSymbol, HashSet<IMethodSymbol>> callerToCalleeMap)
+        private static Dictionary<IMethodSymbol, List<CallInfo>> CreateCalleeToCallerMap(Dictionary<IMethodSymbol, List<CallInfo>> callerToCalleeMap)
         {
-            var result = new Dictionary<IMethodSymbol, HashSet<IMethodSymbol>>();
+            var result = new Dictionary<IMethodSymbol, List<CallInfo>>();
 
             foreach (var item in callerToCalleeMap)
             {
                 var caller = item.Key;
                 foreach (var callee in item.Value)
                 {
-                    if (!result.TryGetValue(callee, out var callers))
+                    if (!result.TryGetValue(callee.MethodSymbol, out var callers))
                     {
-                        result[callee] = callers = new HashSet<IMethodSymbol>();
+                        result[callee.MethodSymbol] = callers = new List<CallInfo>();
                     }
 
-                    callers.Add(caller);
+                    callers.Add(new CallInfo { MethodSymbol = caller, InvocationSyntax = callee.InvocationSyntax });
                 }
             }
 
             return result;
+        }
+
+        private struct CallInfo
+        {
+            public IMethodSymbol MethodSymbol { get; set; }
+
+            public SyntaxNode InvocationSyntax { get; set; }
         }
 
         private class MethodAnalyzer
@@ -266,11 +279,13 @@
 
             internal ImmutableArray<CommonInterest.QualifiedMember> MainThreadSwitchingMethods { get; set; }
 
-            internal ImmutableArray<CommonInterest.TypeMatchSpec> TypesRequiringMainThread { get; set; }
+            internal ImmutableArray<CommonInterest.TypeMatchSpec> MembersRequiringMainThread { get; set; }
 
             internal HashSet<IMethodSymbol> MethodsDeclaringUIThreadRequirement { get; set; }
 
             internal HashSet<IMethodSymbol> MethodsAssertingUIThreadRequirement { get; set; }
+
+            internal ImmutableDictionary<string, string> DiagnosticProperties { get; set; }
 
             internal void AnalyzeInvocation(SyntaxNodeAnalysisContext context)
             {
@@ -309,11 +324,11 @@
                     // The diagnostic (if any) should underline the method name only.
                     var focusedNode = invocationSyntax.Expression;
                     focusedNode = (focusedNode as MemberAccessExpressionSyntax)?.Name ?? focusedNode;
-                    if (!this.AnalyzeTypeWithinContext(invokedMethod.ContainingType, invokedMethod, context, focusedNode.GetLocation()))
+                    if (!this.AnalyzeMemberWithinContext(invokedMethod.ContainingType, invokedMethod, context, focusedNode.GetLocation()))
                     {
                         foreach (var iface in invokedMethod.FindInterfacesImplemented())
                         {
-                            if (this.AnalyzeTypeWithinContext(iface, invokedMethod, context, focusedNode.GetLocation()))
+                            if (this.AnalyzeMemberWithinContext(iface, invokedMethod, context, focusedNode.GetLocation()))
                             {
                                 // Just report the first diagnostic.
                                 break;
@@ -329,32 +344,53 @@
                 var property = context.SemanticModel.GetSymbolInfo(context.Node).Symbol as IPropertySymbol;
                 if (property != null)
                 {
-                    this.AnalyzeTypeWithinContext(property.ContainingType, property, context, memberAccessSyntax.Name.GetLocation());
+                    this.AnalyzeMemberWithinContext(property.ContainingType, property, context, memberAccessSyntax.Name.GetLocation());
                 }
             }
 
             internal void AnalyzeCast(SyntaxNodeAnalysisContext context)
             {
                 var castSyntax = (CastExpressionSyntax)context.Node;
-                var type = context.SemanticModel.GetSymbolInfo(castSyntax.Type).Symbol as ITypeSymbol;
-                if (type != null)
+                var type = context.SemanticModel.GetSymbolInfo(castSyntax.Type, context.CancellationToken).Symbol as ITypeSymbol;
+                if (type != null && IsObjectLikelyToBeCOMObject(type))
                 {
-                    this.AnalyzeTypeWithinContext(type, null, context);
+                    this.AnalyzeMemberWithinContext(type, null, context);
                 }
             }
 
             internal void AnalyzeAs(SyntaxNodeAnalysisContext context)
             {
                 var asSyntax = (BinaryExpressionSyntax)context.Node;
-                var type = context.SemanticModel.GetSymbolInfo(asSyntax.Right).Symbol as ITypeSymbol;
-                if (type != null)
+                var type = context.SemanticModel.GetSymbolInfo(asSyntax.Right, context.CancellationToken).Symbol as ITypeSymbol;
+                if (type != null && IsObjectLikelyToBeCOMObject(type))
                 {
                     Location asAndRightSide = Location.Create(context.Node.SyntaxTree, TextSpan.FromBounds(asSyntax.OperatorToken.Span.Start, asSyntax.Right.Span.End));
-                    this.AnalyzeTypeWithinContext(type, null, context, asAndRightSide);
+                    this.AnalyzeMemberWithinContext(type, null, context, asAndRightSide);
                 }
             }
 
-            private bool AnalyzeTypeWithinContext(ITypeSymbol type, ISymbol symbol, SyntaxNodeAnalysisContext context, Location focusDiagnosticOn = null)
+            /// <summary>
+            /// Determines whether a given type is likely to be (or implemented by) a COM object.
+            /// </summary>
+            /// <returns><c>true</c> if the type appears to be a COM object; <c>false</c> if a managed object.</returns>
+            /// <remarks>
+            /// Type casts and type checks are thread-affinitized for (STA) COM objects, and free-threaded for managed ones.
+            /// </remarks>
+            private static bool IsObjectLikelyToBeCOMObject(ITypeSymbol typeSymbol)
+            {
+                if (typeSymbol == null)
+                {
+                    throw new ArgumentNullException(nameof(typeSymbol));
+                }
+
+                return typeSymbol.GetAttributes().Any(ad =>
+                    (ad.AttributeClass.Name == Types.CoClassAttribute.TypeName && ad.AttributeClass.BelongsToNamespace(Types.CoClassAttribute.Namespace)) ||
+                    (ad.AttributeClass.Name == Types.ComImportAttribute.TypeName && ad.AttributeClass.BelongsToNamespace(Types.ComImportAttribute.Namespace)) ||
+                    (ad.AttributeClass.Name == Types.InterfaceTypeAttribute.TypeName && ad.AttributeClass.BelongsToNamespace(Types.InterfaceTypeAttribute.Namespace)) ||
+                    (ad.AttributeClass.Name == Types.TypeLibTypeAttribute.TypeName && ad.AttributeClass.BelongsToNamespace(Types.TypeLibTypeAttribute.Namespace)));
+            }
+
+            private bool AnalyzeMemberWithinContext(ITypeSymbol type, ISymbol symbol, SyntaxNodeAnalysisContext context, Location focusDiagnosticOn = null)
             {
                 if (type == null)
                 {
@@ -362,9 +398,7 @@
                 }
 
                 bool requiresUIThread = (type.TypeKind == TypeKind.Interface || type.TypeKind == TypeKind.Class)
-                    && this.TypesRequiringMainThread.Contains(type);
-                requiresUIThread |= symbol?.Name == "GetService" && type.Name == "Package" && type.BelongsToNamespace(Namespaces.MicrosoftVisualStudioShell);
-                requiresUIThread |= symbol != null && !symbol.IsStatic && type.Name == "ServiceProvider" && type.BelongsToNamespace(Namespaces.MicrosoftVisualStudioShell);
+                    && this.MembersRequiringMainThread.Contains(type, symbol);
 
                 if (requiresUIThread)
                 {
@@ -377,10 +411,11 @@
 
                     if (threadingContext != ThreadingContext.MainThread)
                     {
+                        var function = Utils.GetContainingFunction((CSharpSyntaxNode)context.Node);
                         Location location = focusDiagnosticOn ?? context.Node.GetLocation();
-                        var exampleAssertingMethod = this.MainThreadAssertingMethods.FirstOrDefault();
-                        var descriptor = exampleAssertingMethod.Name != null ? Descriptor : DescriptorNoAssertingMethod;
-                        context.ReportDiagnostic(Diagnostic.Create(descriptor, location, type.Name, exampleAssertingMethod));
+                        var descriptor = function.IsAsync ? DescriptorAsync : DescriptorSync;
+                        var formattingArgs = function.IsAsync ? new object[] { type.Name } : new object[] { type.Name, this.MainThreadAssertingMethods.FirstOrDefault() };
+                        context.ReportDiagnostic(Diagnostic.Create(descriptor, location, this.DiagnosticProperties, formattingArgs));
                         return true;
                     }
                 }

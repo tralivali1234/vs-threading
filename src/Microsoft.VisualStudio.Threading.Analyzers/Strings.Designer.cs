@@ -125,8 +125,8 @@ namespace Microsoft.VisualStudio.Threading.Analyzers {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Calling await on a Task inside a JoinableTaskFactory.Run, when the task is initialized outside the delegate can cause potential deadlocks.
-        ///You can avoid this problem by ensuring the task is initialized within the delegate or by using JoinableTask instead of Task..
+        ///   Looks up a localized string similar to Calling await on a Task when the task is initialized in another context can cause potential deadlocks.
+        ///You can avoid this problem by ensuring the task is initialized within the same method or by using JoinableTask instead of Task..
         /// </summary>
         internal static string VSTHRD003_MessageFormat {
             get {
@@ -135,7 +135,7 @@ namespace Microsoft.VisualStudio.Threading.Analyzers {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Avoid awaiting non-joinable tasks in join contexts.
+        ///   Looks up a localized string similar to Avoid awaiting foreign Tasks.
         /// </summary>
         internal static string VSTHRD003_Title {
             get {
@@ -144,31 +144,38 @@ namespace Microsoft.VisualStudio.Threading.Analyzers {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to The type &quot;{0}&quot; should be used on main thread explicitly.
-        ///Call {1}() or await JoinableTaskFactory.SwitchToMainThreadAsync() first..
+        ///   Looks up a localized string similar to Calls to JoinableTaskFactory.SwitchToMainThreadAsync() must be awaited..
         /// </summary>
-        internal static string VSTHRD010_MessageFormat {
+        internal static string VSTHRD004_MessageFormat {
             get {
-                return ResourceManager.GetString("VSTHRD010_MessageFormat", resourceCulture);
+                return ResourceManager.GetString("VSTHRD004_MessageFormat", resourceCulture);
             }
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to The type &quot;{0}&quot; should be used on main thread explicitly.
-        ///Await JoinableTaskFactory.SwitchToMainThreadAsync() first..
+        ///   Looks up a localized string similar to Await SwitchToMainThreadAsync.
         /// </summary>
-        internal static string VSTHRD010_MessageFormat_NoAssertingMethod {
+        internal static string VSTHRD004_Title {
             get {
-                return ResourceManager.GetString("VSTHRD010_MessageFormat_NoAssertingMethod", resourceCulture);
+                return ResourceManager.GetString("VSTHRD004_Title", resourceCulture);
             }
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Add call to {0}() at start of member body because this member invokes other members that require the main thread..
+        ///   Looks up a localized string similar to Accessing &quot;{0}&quot; should only be done on the main thread. Await JoinableTaskFactory.SwitchToMainThreadAsync() first..
         /// </summary>
-        internal static string VSTHRD010_MessageFormat_TransitiveMainThreadUser {
+        internal static string VSTHRD010_MessageFormat_Async {
             get {
-                return ResourceManager.GetString("VSTHRD010_MessageFormat_TransitiveMainThreadUser", resourceCulture);
+                return ResourceManager.GetString("VSTHRD010_MessageFormat_Async", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Accessing &quot;{0}&quot; should only be done on the main thread. Call {1}() first..
+        /// </summary>
+        internal static string VSTHRD010_MessageFormat_Sync {
+            get {
+                return ResourceManager.GetString("VSTHRD010_MessageFormat_Sync", resourceCulture);
             }
         }
         
@@ -192,11 +199,21 @@ namespace Microsoft.VisualStudio.Threading.Analyzers {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Avoid using Lazy&lt;T&gt; where T is a Task&lt;T2&gt;.
+        ///   Looks up a localized string similar to Use AsyncLazy&lt;T&gt;.
         /// </summary>
         internal static string VSTHRD011_Title {
             get {
                 return ResourceManager.GetString("VSTHRD011_Title", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Invoking or blocking on async code in a Lazy&lt;T&gt; value factory can deadlock.
+        ///Use AsyncLazy&lt;T&gt; instead..
+        /// </summary>
+        internal static string VSTHRD011b_MessageFormat {
+            get {
+                return ResourceManager.GetString("VSTHRD011b_MessageFormat", resourceCulture);
             }
         }
         
@@ -408,6 +425,87 @@ namespace Microsoft.VisualStudio.Threading.Analyzers {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Avoid throwing when not on the main thread while in an async or Task-returning method. Switch to the thread required instead..
+        /// </summary>
+        internal static string VSTHRD109_MessageFormat {
+            get {
+                return ResourceManager.GetString("VSTHRD109_MessageFormat", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Switch instead of assert in async methods.
+        /// </summary>
+        internal static string VSTHRD109_Title {
+            get {
+                return ResourceManager.GetString("VSTHRD109_Title", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Observe the awaitable result of this method call by awaiting it, assigning to a variable, or passing it to another method..
+        /// </summary>
+        internal static string VSTHRD110_MessageFormat {
+            get {
+                return ResourceManager.GetString("VSTHRD110_MessageFormat", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Observe result of async calls.
+        /// </summary>
+        internal static string VSTHRD110_Title {
+            get {
+                return ResourceManager.GetString("VSTHRD110_Title", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Add .ConfigureAwait(false).
+        /// </summary>
+        internal static string VSTHRD111_CodeFix_False_Title {
+            get {
+                return ResourceManager.GetString("VSTHRD111_CodeFix_False_Title", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Add .ConfigureAwait(true).
+        /// </summary>
+        internal static string VSTHRD111_CodeFix_True_Title {
+            get {
+                return ResourceManager.GetString("VSTHRD111_CodeFix_True_Title", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Add .ConfigureAwait(bool) to your await expression..
+        /// </summary>
+        internal static string VSTHRD111_MessageFormat {
+            get {
+                return ResourceManager.GetString("VSTHRD111_MessageFormat", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Use ConfigureAwait(bool).
+        /// </summary>
+        internal static string VSTHRD111_Title {
+            get {
+                return ResourceManager.GetString("VSTHRD111_Title", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Use &quot;Async&quot; suffix in names of methods that return an awaitable type..
+        /// </summary>
+        internal static string VSTHRD200_AddAsync_MessageFormat {
+            get {
+                return ResourceManager.GetString("VSTHRD200_AddAsync_MessageFormat", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Rename to {0}.
         /// </summary>
         internal static string VSTHRD200_CodeFix_Title {
@@ -417,11 +515,11 @@ namespace Microsoft.VisualStudio.Threading.Analyzers {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Use &quot;Async&quot; suffix in names of Task-returning methods..
+        ///   Looks up a localized string similar to Avoid &quot;Async&quot; suffix in names of methods that do not return an awaitable type..
         /// </summary>
-        internal static string VSTHRD200_MessageFormat {
+        internal static string VSTHRD200_RemoveAsync_MessageFormat {
             get {
-                return ResourceManager.GetString("VSTHRD200_MessageFormat", resourceCulture);
+                return ResourceManager.GetString("VSTHRD200_RemoveAsync_MessageFormat", resourceCulture);
             }
         }
         

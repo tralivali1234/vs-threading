@@ -120,6 +120,11 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             IEnumerable<CommonInterest.SyncBlockingMethod> problematicMethods,
             INamedTypeSymbol taskSymbol)
         {
+            if (memberAccessSyntax == null)
+            {
+                return;
+            }
+
             // Are we in the context of an anonymous function that is passed directly in as an argument to another method?
             var anonymousFunctionSyntax = context.Node.FirstAncestorOrSelf<AnonymousFunctionExpressionSyntax>();
             var anonFuncAsArgument = anonymousFunctionSyntax?.Parent as ArgumentSyntax;
@@ -128,7 +133,7 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
             if (invokedMemberAccess?.Name != null)
             {
                 // Does the anonymous function appear as the first argument to Task.ContinueWith?
-                var invokedMemberSymbol = context.SemanticModel.GetSymbolInfo(invokedMemberAccess.Name).Symbol as IMethodSymbol;
+                var invokedMemberSymbol = context.SemanticModel.GetSymbolInfo(invokedMemberAccess.Name, context.CancellationToken).Symbol as IMethodSymbol;
                 if (invokedMemberSymbol?.Name == nameof(Task.ContinueWith) &&
                     Utils.IsEqualToOrDerivedFrom(invokedMemberSymbol?.ContainingType, taskSymbol) &&
                     invocationPassingExpression?.ArgumentList?.Arguments.FirstOrDefault() == anonFuncAsArgument)
@@ -138,9 +143,9 @@ namespace Microsoft.VisualStudio.Threading.Analyzers
                     if (firstParameter != null)
                     {
                         // Are we accessing a member of the completed task?
-                        ISymbol invokedObjectSymbol = context.SemanticModel.GetSymbolInfo(memberAccessSyntax?.Expression).Symbol;
+                        ISymbol invokedObjectSymbol = context.SemanticModel.GetSymbolInfo(memberAccessSyntax.Expression, context.CancellationToken).Symbol;
                         IParameterSymbol completedTask = context.SemanticModel.GetDeclaredSymbol(firstParameter);
-                        if (invokedObjectSymbol.Equals(completedTask))
+                        if (EqualityComparer<ISymbol>.Default.Equals(invokedObjectSymbol, completedTask))
                         {
                             // Skip analysis since Task.Result (et. al) of a completed Task is fair game.
                             return;

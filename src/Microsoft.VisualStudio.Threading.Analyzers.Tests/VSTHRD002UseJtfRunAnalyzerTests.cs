@@ -1,29 +1,12 @@
 ﻿namespace Microsoft.VisualStudio.Threading.Analyzers.Tests
 {
-    using Microsoft.CodeAnalysis;
-    using Microsoft.CodeAnalysis.CodeFixes;
-    using Microsoft.CodeAnalysis.Diagnostics;
+    using System.Threading.Tasks;
+    using Microsoft.CodeAnalysis.Testing;
     using Xunit;
-    using Xunit.Abstractions;
+    using Verify = CSharpCodeFixVerifier<VSTHRD002UseJtfRunAnalyzer, VSTHRD002UseJtfRunCodeFixWithAwait>;
 
-    public class VSTHRD002UseJtfRunAnalyzerTests : CodeFixVerifier
+    public class VSTHRD002UseJtfRunAnalyzerTests
     {
-        private DiagnosticResult expect = new DiagnosticResult
-        {
-            Id = VSTHRD002UseJtfRunAnalyzer.Id,
-            SkipVerifyMessage = true,
-            Severity = DiagnosticSeverity.Warning,
-        };
-
-        public VSTHRD002UseJtfRunAnalyzerTests(ITestOutputHelper logger)
-            : base(logger)
-        {
-        }
-
-        protected override DiagnosticAnalyzer GetCSharpDiagnosticAnalyzer() => new VSTHRD002UseJtfRunAnalyzer();
-
-        protected override CodeFixProvider GetCSharpCodeFixProvider() => new VSTHRD002UseJtfRunCodeFixWithAwait();
-
         /// <devremarks>
         /// We set TestCategory=AnyCategory here so that *some* test in our assembly uses
         /// "TestCategory" as the name of a trait. This prevents VSTest.Console from failing
@@ -31,7 +14,7 @@
         /// such as this one that don't define any TestCategory tests.
         /// </devremarks>
         [Fact, Trait("TestCategory", "AnyCategory-SeeComment")]
-        public void TaskWaitShouldReportWarning()
+        public async Task TaskWaitShouldReportWarning()
         {
             var test = @"
 using System;
@@ -55,13 +38,12 @@ class Test {
     }
 }
 ";
-            this.expect.Locations = new[] { new DiagnosticResultLocation("Test0.cs", 8, 14, 8, 18) };
-            this.VerifyCSharpDiagnostic(test, this.expect);
-            this.VerifyCSharpFix(test, withFix);
+            var expected = Verify.Diagnostic().WithSpan(8, 14, 8, 18);
+            await Verify.VerifyCodeFixAsync(test, expected, withFix);
         }
 
         [Fact]
-        public void TaskWaitShouldReportWarning_WithinAnonymousDelegate()
+        public async Task TaskWaitShouldReportWarning_WithinAnonymousDelegate()
         {
             var test = @"
 using System;
@@ -74,13 +56,12 @@ class Test {
     }
 }
 ";
-            this.expect.Locations = new[] { new DiagnosticResultLocation("Test0.cs", 8, 31, 8, 35) };
-            this.VerifyCSharpDiagnostic(test, this.expect);
-            this.VerifyNoCSharpFixOffered(test);
+            var expected = Verify.Diagnostic().WithSpan(8, 31, 8, 35);
+            await Verify.VerifyCodeFixAsync(test, expected, test);
         }
 
         [Fact]
-        public void TaskResultShouldReportWarning()
+        public async Task Task_Result_ShouldReportWarning()
         {
             var test = @"
 using System;
@@ -104,13 +85,41 @@ class Test {
     }
 }
 ";
-            this.expect.Locations = new[] { new DiagnosticResultLocation("Test0.cs", 8, 27, 8, 33) };
-            this.VerifyCSharpDiagnostic(test, this.expect);
-            this.VerifyCSharpFix(test, withFix);
+            var expected = Verify.Diagnostic().WithSpan(8, 27, 8, 33);
+            await Verify.VerifyCodeFixAsync(test, expected, withFix);
         }
 
         [Fact]
-        public void TaskResultShouldReportWarning_WithinAnonymousDelegate()
+        public async Task ValueTask_Result_ShouldReportWarning()
+        {
+            var test = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    void F() {
+        ValueTask<int> task = default;
+        var result = task.Result;
+    }
+}
+";
+            var withFix = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    async Task FAsync() {
+        ValueTask<int> task = default;
+        var result = await task;
+    }
+}
+";
+            var expected = Verify.Diagnostic().WithSpan(8, 27, 8, 33);
+            await Verify.VerifyCodeFixAsync(test, expected, withFix);
+        }
+
+        [Fact]
+        public async Task TaskResultShouldReportWarning_WithinAnonymousDelegate()
         {
             var test = @"
 using System;
@@ -123,13 +132,12 @@ class Test {
     }
 }
 ";
-            this.expect.Locations = new[] { new DiagnosticResultLocation("Test0.cs", 8, 34, 8, 40) };
-            this.VerifyCSharpDiagnostic(test, this.expect);
-            this.VerifyNoCSharpFixOffered(test);
+            var expected = Verify.Diagnostic().WithSpan(8, 34, 8, 40);
+            await Verify.VerifyCodeFixAsync(test, expected, test);
         }
 
         [Fact]
-        public void TaskResultShouldNotReportWarning_WithinItsOwnContinuationDelegate()
+        public async Task TaskResultShouldNotReportWarning_WithinItsOwnContinuationDelegate()
         {
             var test = @"
 using System;
@@ -152,31 +160,18 @@ class Test {
     void ContinueWith(Func<Task<int>, int> del) { }
 }
 ";
-            var expect = new DiagnosticResult[]
+
+            DiagnosticResult[] expected =
             {
-                new DiagnosticResult
-                {
-                    Message = this.expect.Message,
-                    Id = this.expect.Id,
-                    Severity = this.expect.Severity,
-                    SkipVerifyMessage = this.expect.SkipVerifyMessage,
-                    Locations = new[] { new DiagnosticResultLocation("Test0.cs", 9, 47, 9, 53) },
-                },
-                new DiagnosticResult
-                {
-                    Message = this.expect.Message,
-                    Id = this.expect.Id,
-                    Severity = this.expect.Severity,
-                    SkipVerifyMessage = this.expect.SkipVerifyMessage,
-                    Locations = new[] { new DiagnosticResultLocation("Test0.cs", 10, 29, 10, 35) },
-                },
+                Verify.Diagnostic().WithSpan(9, 47, 9, 53),
+                Verify.Diagnostic().WithSpan(10, 29, 10, 35),
             };
-            this.VerifyCSharpDiagnostic(test, expect);
-            this.VerifyNoCSharpFixOffered(test);
+
+            await Verify.VerifyCodeFixAsync(test, expected, test);
         }
 
         [Fact]
-        public void AwaiterGetResultShouldReportWarning()
+        public async Task Task_GetAwaiter_GetResult_ShouldReportWarning()
         {
             var test = @"
 using System;
@@ -200,15 +195,43 @@ class Test {
     }
 }
 ";
-            this.expect.Locations = new[] { new DiagnosticResultLocation("Test0.cs", 8, 27, 8, 36) };
-            this.VerifyCSharpDiagnostic(test, this.expect);
-            this.VerifyCSharpFix(test, withFix);
+            var expected = Verify.Diagnostic().WithSpan(8, 27, 8, 36);
+            await Verify.VerifyCodeFixAsync(test, expected, withFix);
         }
 
         [Fact]
-        public void TaskResult_FixUpdatesCallers()
+        public async Task ValueTask_GetAwaiter_GetResult_ShouldReportWarning()
         {
-            var test = new[] {
+            var test = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    void F() {
+        ValueTask task = default;
+        task.GetAwaiter().GetResult();
+    }
+}
+";
+            var withFix = @"
+using System;
+using System.Threading.Tasks;
+
+class Test {
+    async Task FAsync() {
+        ValueTask task = default;
+        await task;
+    }
+}
+";
+            var expected = Verify.Diagnostic().WithSpan(8, 27, 8, 36);
+            await Verify.VerifyCodeFixAsync(test, expected, withFix);
+        }
+
+        [Fact]
+        public async Task TaskResult_FixUpdatesCallers()
+        {
+            var test = new SourceFileList("Test", "cs") {
                 @"
 using System;
 using System.Threading.Tasks;
@@ -239,8 +262,8 @@ class TestClient {
         return Test.GetNumber(a) * b;
     }
 }
-" };
-            var withFix = new[] {
+", };
+            var withFix = new SourceFileList("Test", "cs") {
                 @"
 using System;
 using System.Threading.Tasks;
@@ -271,14 +294,24 @@ class TestClient {
         return await Test.GetNumberAsync(a) * b;
     }
 }
-" };
-            this.expect.Locations = new[] { new DiagnosticResultLocation("Test0.cs", 8, 21, 8, 27) };
-            this.VerifyCSharpDiagnostic(test, hasEntrypoint: true, allowErrors: false, expected: this.expect);
-            this.VerifyCSharpFix(test, withFix, hasEntrypoint: true);
+", };
+
+            var verifyTest = new Verify.Test
+            {
+                ExpectedDiagnostics =
+                {
+                    Verify.Diagnostic().WithSpan(8, 21, 8, 27),
+                },
+                HasEntryPoint = true,
+            };
+
+            verifyTest.TestState.Sources.AddRange(test);
+            verifyTest.FixedState.Sources.AddRange(withFix);
+            await verifyTest.RunAsync();
         }
 
         [Fact]
-        public void DoNotReportWarningInTaskReturningMethods()
+        public async Task DoNotReportWarningInTaskReturningMethods()
         {
             var test = @"
 using System.Threading.Tasks;
@@ -291,11 +324,11 @@ class Test {
     }
 }
 ";
-            this.VerifyCSharpDiagnostic(test);
+            await Verify.VerifyAnalyzerAsync(test);
         }
 
         [Fact]
-        public void DoNotReportWarningOnCodeGeneratedByXaml2CS()
+        public async Task DoNotReportWarningOnCodeGeneratedByXaml2CS()
         {
             var test = @"
 //------------------------------------------------------------------------------
@@ -321,11 +354,11 @@ namespace Microsoft.VisualStudio.JavaScript.Project {
     }
 }
 ";
-            this.VerifyCSharpDiagnostic(test);
+            await Verify.VerifyAnalyzerAsync(test);
         }
 
         [Fact]
-        public void DoNotReportWarningOnJTFRun()
+        public async Task DoNotReportWarningOnJTFRun()
         {
             var test = @"
 using System;
@@ -338,15 +371,15 @@ class ProjectProperties {
     void F() {
         jtf.Run(async delegate {
             await Task.Yield();
-        }); 
+        });
     }
 }
 ";
-            this.VerifyCSharpDiagnostic(test);
+            await Verify.VerifyAnalyzerAsync(test);
         }
 
         [Fact]
-        public void DoNotReportWarningOnJoinableTaskJoin()
+        public async Task DoNotReportWarningOnJoinableTaskJoin()
         {
             var test = @"
 using System;
@@ -359,12 +392,59 @@ class ProjectProperties {
     void F() {
         var jt = jtf.RunAsync(async delegate {
             await Task.Yield();
-        }); 
+        });
         jt.Join();
     }
 }
 ";
-            this.VerifyCSharpDiagnostic(test);
+            await Verify.VerifyAnalyzerAsync(test);
+        }
+
+        [Fact]
+        public async Task MethodsWithoutLeadingMember()
+        {
+            var test = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.VisualStudio.Threading;
+
+class ProjectProperties {
+    public void Start(Task action, Action<Exception> exceptionHandler = null)
+    {
+        Task task = action.ContinueWith(
+            t => exceptionHandler(t.Exception.InnerException),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+    }
+}
+";
+            await Verify.VerifyAnalyzerAsync(test);
+        }
+
+        [Fact]
+        public async Task AnonymousDelegateWithExplicitCast()
+        {
+            var test = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.VisualStudio.Threading;
+
+class ProjectProperties {
+    public void Start(JoinableTask joinableTask, object registration)
+    {
+        joinableTask.Task.ContinueWith(
+            (_, state) => ((CancellationTokenRegistration)state).Dispose(),
+            registration,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+}
+";
+            await Verify.VerifyAnalyzerAsync(test);
         }
     }
 }

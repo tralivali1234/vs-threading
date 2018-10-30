@@ -13,7 +13,7 @@
     {
         protected const int AsyncDelay = 500;
 
-        protected const int TestTimeout = 1000;
+        protected const int TestTimeout = 5000;
 
         /// <summary>
         /// The maximum length of time to wait for something that we expect will happen
@@ -38,7 +38,7 @@
         /// Gets or sets the source of <see cref="TimeoutToken"/> that influences
         /// when tests consider themselves to be timed out.
         /// </summary>
-        protected CancellationTokenSource TimeoutTokenSource { get; set; } = new CancellationTokenSource(TestTimeout);
+        protected CancellationTokenSource TimeoutTokenSource { get; set; } = new CancellationTokenSource(UnexpectedTimeout);
 
         /// <summary>
         /// Gets a token that is canceled when the test times out,
@@ -163,13 +163,32 @@
             for (int attempt = 1; attempt <= allowedAttempts; attempt++)
             {
                 this.Logger?.WriteLine("Iteration {0}", attempt);
+                int[] gcCountBefore = new int[GC.MaxGeneration + 1];
+                int[] gcCountAfter = new int[GC.MaxGeneration + 1];
                 long initialMemory = GC.GetTotalMemory(true);
+#if NET46 || NETCOREAPP2_0
+                GC.TryStartNoGCRegion(8 * 1024 * 1024);
+#endif
+                for (int i = 0; i <= GC.MaxGeneration; i++)
+                {
+                    gcCountBefore[i] = GC.CollectionCount(i);
+                }
+
                 for (int i = 0; i < iterations; i++)
                 {
                     await MaybeShouldBeComplete(scenario(), completeSynchronously);
                 }
 
+                for (int i = 0; i < gcCountAfter.Length; i++)
+                {
+                    gcCountAfter[i] = GC.CollectionCount(i);
+                }
+
                 long allocated = (GC.GetTotalMemory(false) - initialMemory) / iterations;
+#if NET46 || NETCOREAPP2_0
+                GC.EndNoGCRegion();
+#endif
+
                 attemptWithinMemoryLimitsObserved |= maxBytesAllocated == -1 || allocated <= maxBytesAllocated;
                 long leaked = long.MaxValue;
                 for (int leakCheck = 0; leakCheck < 3; leakCheck++)
@@ -179,11 +198,11 @@
                     {
                         // If there is a dispatcher sync context, let it run for a bit.
                         // This allows any posted messages that are now obsolete to be released.
-                        if (SingleThreadedSynchronizationContext.IsSingleThreadedSyncContext(SynchronizationContext.Current))
+                        if (SingleThreadedTestSynchronizationContext.IsSingleThreadedSyncContext(SynchronizationContext.Current))
                         {
-                            var frame = SingleThreadedSynchronizationContext.NewFrame();
+                            var frame = SingleThreadedTestSynchronizationContext.NewFrame();
                             SynchronizationContext.Current.Post(state => frame.Continue = false, null);
-                            SingleThreadedSynchronizationContext.PushFrame(SynchronizationContext.Current, frame);
+                            SingleThreadedTestSynchronizationContext.PushFrame(SynchronizationContext.Current, frame);
                         }
                     }
                     else
@@ -203,6 +222,11 @@
 
                 this.Logger?.WriteLine("{0} bytes leaked per iteration.", leaked);
                 this.Logger?.WriteLine("{0} bytes allocated per iteration ({1} allowed).", allocated, maxBytesAllocated);
+
+                for (int i = 0; i <= GC.MaxGeneration; i++)
+                {
+                    Assert.False(gcCountAfter[i] > gcCountBefore[i], $"WARNING: Gen {i} GC occurred {gcCountAfter[i] - gcCountBefore[i]} times during testing. Results are probably totally wrong.");
+                }
 
                 if (attemptWithNoLeakObserved && attemptWithinMemoryLimitsObserved)
                 {
@@ -272,11 +296,11 @@
             });
         }
 
-        protected void ExecuteOnDispatcher(Func<Task> action)
+        protected void ExecuteOnDispatcher(Func<Task> action, bool staRequired = true)
         {
             Action worker = delegate
             {
-                var frame = SingleThreadedSynchronizationContext.NewFrame();
+                var frame = SingleThreadedTestSynchronizationContext.NewFrame();
                 Exception failure = null;
                 SynchronizationContext.Current.Post(
                     async _ =>
@@ -296,7 +320,7 @@
                     },
                     null);
 
-                SingleThreadedSynchronizationContext.PushFrame(SynchronizationContext.Current, frame);
+                SingleThreadedTestSynchronizationContext.PushFrame(SynchronizationContext.Current, frame);
                 if (failure != null)
                 {
                     ExceptionDispatchInfo.Capture(failure).Throw();
@@ -304,8 +328,8 @@
             };
 
 #if DESKTOP || NETCOREAPP2_0
-            if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA &&
-                SingleThreadedSynchronizationContext.IsSingleThreadedSyncContext(SynchronizationContext.Current))
+            if ((!staRequired || Thread.CurrentThread.GetApartmentState() == ApartmentState.STA) &&
+                SingleThreadedTestSynchronizationContext.IsSingleThreadedSyncContext(SynchronizationContext.Current))
             {
                 worker();
             }
@@ -313,16 +337,16 @@
             {
                 this.ExecuteOnSTA(() =>
                 {
-                    if (!SingleThreadedSynchronizationContext.IsSingleThreadedSyncContext(SynchronizationContext.Current))
+                    if (!SingleThreadedTestSynchronizationContext.IsSingleThreadedSyncContext(SynchronizationContext.Current))
                     {
-                        SynchronizationContext.SetSynchronizationContext(SingleThreadedSynchronizationContext.New());
+                        SynchronizationContext.SetSynchronizationContext(SingleThreadedTestSynchronizationContext.New());
                     }
 
                     worker();
                 });
             }
 #else
-            if (SingleThreadedSynchronizationContext.IsSingleThreadedSyncContext(SynchronizationContext.Current))
+            if (SingleThreadedTestSynchronizationContext.IsSingleThreadedSyncContext(SynchronizationContext.Current))
             {
                 worker();
             }
@@ -330,7 +354,7 @@
             {
                 Task.Run(delegate
                 {
-                    SynchronizationContext.SetSynchronizationContext(SingleThreadedSynchronizationContext.New());
+                    SynchronizationContext.SetSynchronizationContext(SingleThreadedTestSynchronizationContext.New());
                     worker();
                 }).GetAwaiter().GetResult();
             }

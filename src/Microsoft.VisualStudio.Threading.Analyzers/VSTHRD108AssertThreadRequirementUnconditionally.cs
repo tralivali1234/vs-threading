@@ -37,12 +37,13 @@
         public const string Id = "VSTHRD108";
 
         internal static readonly DiagnosticDescriptor Descriptor = new DiagnosticDescriptor(
-           id: Id,
-           title: Strings.VSTHRD108_Title,
-           messageFormat: Strings.VSTHRD108_MessageFormat,
-           category: "Usage",
-           defaultSeverity: DiagnosticSeverity.Warning,
-           isEnabledByDefault: true);
+            id: Id,
+            title: Strings.VSTHRD108_Title,
+            messageFormat: Strings.VSTHRD108_MessageFormat,
+            helpLinkUri: Utils.GetHelpLink(Id),
+            category: "Usage",
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true);
 
         /// <inheritdoc />
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(Descriptor);
@@ -55,7 +56,7 @@
 
             context.RegisterCompilationStartAction(ctxt =>
             {
-                var mainThreadAssertingMethods = CommonInterest.ReadMethods(ctxt, CommonInterest.FileNamePatternForMethodsThatAssertMainThread).ToImmutableArray();
+                var mainThreadAssertingMethods = CommonInterest.ReadMethods(ctxt.Options, CommonInterest.FileNamePatternForMethodsThatAssertMainThread, ctxt.CancellationToken).ToImmutableArray();
 
                 ctxt.RegisterCodeBlockStartAction<SyntaxKind>(ctxt2 =>
                 {
@@ -90,7 +91,7 @@
             var containingInvocationSyntax = argument?.FirstAncestorOrSelf<InvocationExpressionSyntax>();
             if (containingInvocationSyntax != null)
             {
-                var symbolOfContainingMethodInvocation = context.SemanticModel.GetSymbolInfo(containingInvocationSyntax.Expression).Symbol;
+                var symbolOfContainingMethodInvocation = context.SemanticModel.GetSymbolInfo(containingInvocationSyntax.Expression, context.CancellationToken).Symbol;
                 return symbolOfContainingMethodInvocation?.GetAttributes().Any(a =>
                     a.AttributeClass.BelongsToNamespace(Namespaces.SystemDiagnostics) &&
                     a.AttributeClass.Name == nameof(System.Diagnostics.ConditionalAttribute)) ?? false;

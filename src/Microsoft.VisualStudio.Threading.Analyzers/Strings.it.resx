@@ -28,11 +28,6 @@
   <data name="VSTHRD002_Title" xml:space="preserve">
     <value>Evita attese sincrone problematiche</value>
   </data>
-  <data name="VSTHRD010_MessageFormat" xml:space="preserve">
-    <value>Il tipo "{0}" deve essere usato sul thread principale in modo esplicito.
-Chiamare {1}() o attendere prima JoinableTaskFactory.SwitchToMainThreadAsync().</value>
-    <comment>{0} is a type name and {1} is the name of a method that throws if not called from the main thread.</comment>
-  </data>
   <data name="VSTHRD010_Title" xml:space="preserve">
     <value>Richiamare tipi a thread singolo sul thread principale</value>
   </data>
@@ -69,10 +64,10 @@ Per evitare il problema, assicurarsi che Task venga inizializzato all'interno de
 In alternativa, usare AsyncLazy&lt;T&gt;.</value>
   </data>
   <data name="VSTHRD011_Title" xml:space="preserve">
-    <value>Evitare di usare Lazy&lt;T&gt; in cui T è un elemento Task&lt;T2&gt;</value>
+    <value>Usa AsyncLazy&lt;T&gt;</value>
   </data>
   <data name="VSTHRD103_MessageFormat" xml:space="preserve">
-    <value>{0} si blocca in modalità sincrona. In alternativa, attendere {1}.</value>
+    <value>{0} si blocca in modalità sincrona. In alternativa, usare await {1}.</value>
   </data>
   <data name="VSTHRD103_MessageFormat_UseAwaitInstead" xml:space="preserve">
     <value>{0} si blocca in modalità sincrona. In alternativa, usare await.</value>
@@ -89,9 +84,6 @@ In alternativa, usare AsyncLazy&lt;T&gt;.</value>
   <data name="VSTHRD200_CodeFix_Title" xml:space="preserve">
     <value>Rinomina in {0}</value>
     <comment>{0} is a method name.</comment>
-  </data>
-  <data name="VSTHRD200_MessageFormat" xml:space="preserve">
-    <value>Usare il suffisso "Async" in nomi di metodi che restituiscono Task.</value>
   </data>
   <data name="VSTHRD200_Title" xml:space="preserve">
     <value>Usa suffisso "Async" per metodi asincroni</value>
@@ -147,13 +139,57 @@ In alternativa, usare AsyncLazy&lt;T&gt;.</value>
   <data name="VSTHRD108_Title" xml:space="preserve">
     <value>Asserisci l'affinità dei thread in modo non condizionale</value>
   </data>
-  <data name="VSTHRD010_MessageFormat_NoAssertingMethod" xml:space="preserve">
-    <value>Il tipo "{0}" deve essere usato sul thread principale in modo esplicito.
-Attendere prima JoinableTaskFactory.SwitchToMainThreadAsync().</value>
-    <comment>{0} is a type name and {1} is the name of a method that throws if not called from the main thread.</comment>
+  <data name="VSTHRD109_MessageFormat" xml:space="preserve">
+    <value>Evitare la generazione quando non si è in un thread principale durante un metodo asincrono o che restituisce elementi Task. In alternativa, passare al thread richiesto.</value>
   </data>
-  <data name="VSTHRD010_MessageFormat_TransitiveMainThreadUser" xml:space="preserve">
-    <value>Aggiungere la chiamata a {0}() all'inizio del corpo del membro perché questo membro richiama altri membri che richiedono il thread principale.</value>
-    <comment>{0} is a method name.</comment>
+  <data name="VSTHRD109_Title" xml:space="preserve">
+    <value>Usa switch invece di assert in metodi asincroni</value>
+  </data>
+  <data name="VSTHRD010_MessageFormat_Sync" xml:space="preserve">
+    <value>L'accesso a "{0}" deve essere effettuato solo nel thread principale. Chiamare prima {1}().</value>
+    <comment>{0} is a type or member name and {1} is the name of a method that throws if not called from the main thread.</comment>
+  </data>
+  <data name="VSTHRD010_MessageFormat_Async" xml:space="preserve">
+    <value>L'accesso a "{0}" deve essere effettuato solo nel thread principale. Usare prima await JoinableTaskFactory.SwitchToMainThreadAsync().</value>
+    <comment>{0} is a type or member name.</comment>
+  </data>
+  <data name="VSTHRD004_MessageFormat" xml:space="preserve">
+    <value>Con le chiamate a JoinableTaskFactory.SwitchToMainThreadAsync() è necessario usare await.</value>
+  </data>
+  <data name="VSTHRD004_Title" xml:space="preserve">
+    <value>Usa await SwitchToMainThreadAsync</value>
+    <comment>Do not translate either of these. The first is a keyword, the second is a method name.</comment>
+  </data>
+  <data name="VSTHRD110_MessageFormat" xml:space="preserve">
+    <value>Per osservare il risultato awaitable di questa chiamata al metodo, usare await per la chiamata, assegnarla a una variabile o passarla a un altro metodo.</value>
+  </data>
+  <data name="VSTHRD110_Title" xml:space="preserve">
+    <value>Osserva il risultato di chiamate asincrone</value>
+  </data>
+  <data name="VSTHRD011b_MessageFormat" xml:space="preserve">
+    <value>La chiamata o il blocco su codice asincrono in una factory di valori Lazy&lt;T&gt; può causare un deadlock.
+In alternativa, usare AsyncLazy&lt;T&gt;.</value>
+  </data>
+  <data name="VSTHRD200_AddAsync_MessageFormat" xml:space="preserve">
+    <value>Usare il suffisso "Async" in nomi di metodi che restituiscono un tipo awaitable.</value>
+  </data>
+  <data name="VSTHRD200_RemoveAsync_MessageFormat" xml:space="preserve">
+    <value>Evitare il suffisso "Async" in nomi di metodi che non restituiscono un tipo awaitable.</value>
+  </data>
+  <data name="VSTHRD111_CodeFix_False_Title" xml:space="preserve">
+    <value>Aggiungi .ConfigureAwait(false)</value>
+    <comment>".ConfigureAwait(false)" should not be translated.</comment>
+  </data>
+  <data name="VSTHRD111_CodeFix_True_Title" xml:space="preserve">
+    <value>Aggiungi .ConfigureAwait(true)</value>
+    <comment>".ConfigureAwait(true)" should not be translated.</comment>
+  </data>
+  <data name="VSTHRD111_MessageFormat" xml:space="preserve">
+    <value>Aggiungere .ConfigureAwait(bool) all'espressione await.</value>
+    <comment>".ConfigureAwait(bool)" and "await" should NOT be translated.</comment>
+  </data>
+  <data name="VSTHRD111_Title" xml:space="preserve">
+    <value>Usa ConfigureAwait(bool)</value>
+    <comment>"ConfigureAwait(bool)" is a reference and should NOT be translated.</comment>
   </data>
 </root>
